@@ -5,7 +5,28 @@ import { AppModule } from './app.module.js';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors(); // ponytail: open CORS for MVP — lock down origins in prod
+  const allowedOrigins = [
+    'https://admin-theta-beryl-35.vercel.app',
+    'https://admin-yashu1t508s-projects.vercel.app',
+    /https:\/\/admin-.*\.vercel\.app$/,           // any preview deploy
+    'http://localhost:3001',
+    'http://localhost:4200',
+  ];
+
+  app.enableCors({
+    origin: (origin, callback) => {
+      // allow requests with no origin (mobile apps, curl, Render health checks)
+      if (!origin) return callback(null, true);
+      const allowed =
+        allowedOrigins.some((o) =>
+          typeof o === 'string' ? o === origin : o.test(origin),
+        );
+      callback(allowed ? null : new Error('CORS: origin not allowed'), allowed);
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
