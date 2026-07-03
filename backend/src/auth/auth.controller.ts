@@ -1,4 +1,6 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req } from '@nestjs/common';
+import { Auth } from './roles.guard.js';
+import type { JwtPayload } from './jwt.strategy.js';
 import { AuthService } from './auth.service.js';
 import { RegisterDto, LoginDto } from './auth.dto.js';
 
@@ -14,5 +16,11 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
+  }
+
+  @Get('me')
+  @Auth()
+  me(@Req() req: { user: JwtPayload }) {
+    return this.auth.getMe(req.user.sub);
   }
 }

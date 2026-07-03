@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -18,6 +19,7 @@ import { Auth } from '../auth/roles.guard.js';
 import type { JwtPayload } from '../auth/jwt.strategy.js';
 import { HostelService } from './hostel.service.js';
 import { CreateHostelDto, UpdateHostelDto, AssignStudentsDto } from './hostel.dto.js';
+import { CreateWindowDto, UpdateWindowDto } from './window.dto.js';
 import { DB_TOKEN, type Database } from '../db/index.js';
 import {
   users,
@@ -209,5 +211,47 @@ export class HostelController {
     }
 
     return { assigned: !!hostelId };
+  }
+
+  // ── Check-in Windows ────────────────────────────────
+
+  @Get('hostel/:id/windows')
+  @Auth()
+  listWindows(@Param('id', ParseUUIDPipe) id: string) {
+    return this.hostels.listWindows(id);
+  }
+
+  @Post('hostel/:id/windows')
+  @Auth('admin')
+  createWindow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateWindowDto,
+  ) {
+    return this.hostels.createWindow(id, dto);
+  }
+
+  @Patch('hostel/:id/windows/:wid')
+  @Auth('admin')
+  updateWindow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('wid', ParseUUIDPipe) wid: string,
+    @Body() dto: UpdateWindowDto,
+  ) {
+    return this.hostels.updateWindow(id, wid, dto);
+  }
+
+  @Delete('hostel/:id/windows/:wid')
+  @Auth('admin')
+  deleteWindow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('wid', ParseUUIDPipe) wid: string,
+  ) {
+    return this.hostels.deleteWindow(id, wid);
+  }
+
+  @Get('hostel/:id/active-window')
+  @Auth()
+  getActiveWindow(@Param('id', ParseUUIDPipe) id: string) {
+    return this.hostels.getActiveWindow(id);
   }
 }

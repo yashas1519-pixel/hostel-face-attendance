@@ -71,4 +71,25 @@ export class AuthService {
   private signToken(user: { id: string; email: string; role: string }) {
     return this.jwt.sign({ sub: user.id, email: user.email, role: user.role });
   }
+
+  async getMe(userId: string) {
+    const [user] = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        rollNumber: users.rollNumber,
+        role: users.role,
+        collegeName: users.collegeName,
+        enrollmentStatus: users.enrollmentStatus,
+        embeddingEnrolledAt: users.embeddingEnrolledAt,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) throw new UnauthorizedException('User not found');
+    return user;
+  }
 }
