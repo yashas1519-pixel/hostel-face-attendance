@@ -10,10 +10,14 @@ export function getToken(): string | null {
 
 export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token);
+  // Also set a cookie so Next.js Edge middleware can read it for SSR route guards
+  document.cookie = `${TOKEN_KEY}=${token}; path=/; SameSite=Strict; max-age=${7 * 24 * 60 * 60}`;
 }
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  // Clear the cookie too
+  document.cookie = `${TOKEN_KEY}=; path=/; max-age=0`;
 }
 
 export function isAuthenticated(): boolean {

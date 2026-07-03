@@ -54,6 +54,33 @@ export class AttendanceService {
       .limit(1);
     if (!assignment) throw new BadRequestException('Student not assigned to this hostel');
 
+    // ── Rate limiting: per-student (3/min) and per-device (10/hr) ───────────
+    const oneMinuteAgo = new Date(Date.now() - 60_000);
+    const oneHourAgo   = new Date(Date.now() - 3_600_000);
+
+    const [{ studentAttempts }] = await this.db
+      .select({ studentAttempts: sql<number>`count(*)::int` })
+      .from(attendanceRecords)
+      .where(and(
+        eq(attendanceRecords.studentId, studentId),
+        gte(attendanceRecords.createdAt, oneMinuteAgo),
+      ));
+    if ((studentAttempts ?? 0) >= 3) {
+      throw new BadRequestException('Too many attendance attempts. Wait 60 seconds before trying again.');
+    }
+
+    const [{ deviceAttempts }] = await this.db
+      .select({ deviceAttempts: sql<number>`count(*)::int` })
+      .from(attendanceRecords)
+      .where(and(
+        eq(attendanceRecords.deviceId, dto.deviceId),
+        gte(attendanceRecords.createdAt, oneHourAgo),
+      ));
+    if ((deviceAttempts ?? 0) >= 10) {
+      this.logger.warn(`Device rate-limit hit: deviceId=${dto.deviceId}`);
+      throw new BadRequestException('This device has made too many attendance attempts. Try again later.');
+    }
+
     const [hostel] = await this.db
       .select()
       .from(hostels)

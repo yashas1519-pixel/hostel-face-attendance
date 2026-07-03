@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   # ponytail: only what we actually need
   http: ^1.2.0                          # API calls
-  shared_preferences: ^2.3.0            # JWT storage
+  flutter_secure_storage: ^9.2.2        # JWT stored in Keychain (iOS) / EncryptedSharedPrefs (Android)
   camera: ^0.11.0                       # Face capture
   google_mlkit_face_detection: ^0.12.0  # Face detection + Euler angles
   tflite_flutter: ^0.11.0               # MobileFaceNet embeddings
@@ -19,6 +19,7 @@ dependencies:
   network_info_plus: ^6.1.0             # WiFi BSSID
   permission_handler: ^11.3.0           # Camera + location permissions
   google_fonts: ^6.2.0                  # Inter font
+  flutter_jailbreak_detection: ^1.9.0   # Root/jailbreak detection → flag record for review
 
 dev_dependencies:
   flutter_test:

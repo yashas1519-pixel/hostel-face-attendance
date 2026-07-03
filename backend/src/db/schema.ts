@@ -9,6 +9,7 @@ import {
   integer,
   pgEnum,
   customType,
+  index,
 } from 'drizzle-orm/pg-core';
 
 // ponytail: custom bytea type — drizzle-orm doesn't ship one for pg-core
@@ -46,12 +47,29 @@ export const users = pgTable('users', {
   enrollmentStatus: enrollmentStatusEnum('enrollment_status')
     .notNull()
     .default('none'),
+  // Account lockout — server-side brute-force protection
+  loginAttempts: integer('login_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()
     .$onUpdateFn(() => new Date()),
 });
+
+// ── Refresh Tokens ─────────────────────────────────────────────────────
+// ponytail: hash stored (SHA-256 of the random token), never the raw value
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(), // SHA-256 hex of the raw token
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('rt_user_idx').on(t.userId),
+  hashIdx: index('rt_hash_idx').on(t.tokenHash),
+}));
 
 // ── Hostels ────────────────────────────────────────────────────────────
 export const hostels = pgTable('hostels', {
@@ -108,15 +126,9 @@ export const studentHostelAssignments = pgTable('student_hostel_assignments', {
 // ── Attendance Records ────────────────────────────────────────────────
 export const attendanceRecords = pgTable('attendance_records', {
   id: uuid('id').defaultRandom().primaryKey(),
-  studentId: uuid('student_id')
-    .notNull()
-    .references(() => users.id),
-  hostelId: uuid('hostel_id')
-    .notNull()
-    .references(() => hostels.id),
-  checkInWindowId: uuid('check_in_window_id')
-    .notNull()
-    .references(() => checkInWindows.id),
+  studentId: uuid('student_id').notNull().references(() => users.id),
+  hostelId: uuid('hostel_id').notNull().references(() => hostels.id),
+  checkInWindowId: uuid('check_in_window_id').notNull().references(() => checkInWindows.id),
   markedAt: timestamp('marked_at', { withTimezone: true }).notNull().defaultNow(),
   faceMatchScore: real('face_match_score').notNull(),
   livenessPassed: boolean('liveness_passed').notNull(),
@@ -126,15 +138,20 @@ export const attendanceRecords = pgTable('attendance_records', {
   deviceLng: doublePrecision('device_lng').notNull(),
   gpsAccuracyM: real('gps_accuracy_m'),
   // spec §6: building_id maps to hostelId in our schema (hostel IS the building)
-  gpsSampleSpreadM: real('gps_sample_spread_m'),   // max pairwise distance of GPS samples
-  impliedSpeedMps: real('implied_speed_mps'),       // haversine(prev→curr) / secs_elapsed
+  gpsSampleSpreadM: real('gps_sample_spread_m'),
+  impliedSpeedMps: real('implied_speed_mps'),
   wifiBssidMatched: text('wifi_bssid_matched'),
   mockLocationFlag: boolean('mock_location_flag').notNull().default(false),
   deviceId: text('device_id').notNull(),
   status: attendanceStatusEnum('status').notNull(),
   rejectionReason: text('rejection_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  studentIdx:  index('att_student_idx').on(t.studentId),
+  hostelIdx:   index('att_hostel_idx').on(t.hostelId),
+  markedAtIdx: index('att_marked_at_idx').on(t.markedAt),
+  deviceIdx:   index('att_device_idx').on(t.deviceId),
+}));
 
 // ── Leave Requests ────────────────────────────────────────────────────
 export const leaveStatusEnum = pgEnum('leave_status', [

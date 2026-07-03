@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_jailbreak_detection/flutter_jailbreak_detection.dart';
 import '../services/auth_service.dart';
 import '../services/face_service.dart';
 
@@ -30,6 +31,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
   String? _hostelId;
   String? _activeWindowId;
   Face? _lastFace;
+  // Security: rooted/jailbroken device flag — don't block (false positives on custom ROMs)
+  // but pass to server so admin can review flagged records
+  bool _deviceCompromised = false;
 
   static const _challenges = ['turn_right', 'turn_left', 'blink'];
   static const _challengeLabels = {
@@ -45,6 +49,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   Future<void> _initAll() async {
+    // Check root/jailbreak — warn user, flag record for admin review
+    try {
+      _deviceCompromised = await FlutterJailbreakDetection.jailbroken;
+    } catch (_) {
+      _deviceCompromised = false; // can't detect = treat as safe
+    }
     await _initCamera();
     await _loadAssignment();
   }
@@ -218,6 +228,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
         'gpsAccuracyM': avgAccuracy,
         'wifiBssidMatched': bssid ?? '',
         'mockLocationFlag': isMocked,
+        'deviceCompromised': _deviceCompromised, // rooted/jailbroken flag for admin review
         'deviceId': 'device-${user?['id'] ?? 'unknown'}',
         'gpsSampleSpread': maxSpread,   // spec §2: max pairwise distance of samples
       });

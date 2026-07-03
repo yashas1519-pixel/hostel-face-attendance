@@ -39,3 +39,9 @@ export class LoginDto {
   @IsNotEmpty()
   password!: string;
 }
+
+export class RefreshDto {
+  @IsString()
+  @IsNotEmpty()
+  refreshToken!: string;
+}
