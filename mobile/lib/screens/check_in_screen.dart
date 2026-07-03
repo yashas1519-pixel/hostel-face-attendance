@@ -24,7 +24,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
   int _countdown = 4;
   String? _error;
   String? _resultStatus;
-  bool _submitting = false;
 
   static const _challenges = ['turn_right', 'turn_left', 'blink'];
   static const _challengeLabels = {
@@ -76,7 +75,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   Future<void> _submitAttendance() async {
-    setState(() { _step = 'processing'; _submitting = true; });
+    setState(() { _step = 'processing'; });
 
     try {
       // Get GPS location
@@ -114,13 +113,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
       setState(() {
         _resultStatus = result['status'] as String? ?? 'unknown';
         _step = 'result';
-        _submitting = false;
       });
     } catch (e) {
       setState(() {
         _error = e.toString().replaceFirst('Exception: ', '');
         _step = 'error';
-        _submitting = false;
       });
     }
   }
