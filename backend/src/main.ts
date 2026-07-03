@@ -12,10 +12,9 @@ async function bootstrap() {
 
   const allowedOrigins = [
     'https://admin-theta-beryl-35.vercel.app',
-    'https://admin-dw76jzh21-yashu1t508s-projects.vercel.app',
-    'https://admin-mmh80vsrt-yashu1t508s-projects.vercel.app',
     'https://admin-22upzpxv2-yashu1t508s-projects.vercel.app',
     'https://admin-25kcc5qrn-yashu1t508s-projects.vercel.app',
+    'https://admin-1d9pfvhvo-yashu1t508s-projects.vercel.app',
     /https:\/\/admin-.*\.vercel\.app$/,
     'http://localhost:3001',
     'http://localhost:4200',
