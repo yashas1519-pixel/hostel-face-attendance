@@ -4,7 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { eq, sql, desc } from 'drizzle-orm';
 import { DB_TOKEN, type Database } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { encrypt, decrypt } from '../lib/crypto.js';
@@ -94,5 +94,35 @@ export class EnrollmentService {
   decryptEmbedding(encrypted: Buffer): number[] {
     const raw = decrypt(encrypted);
     return Array.from(new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4));
+  }
+
+  async list(status: string | undefined, page: number, limit: number) {
+    const offset = (page - 1) * limit;
+
+    const whereClause = status
+      ? sql`role = 'student' AND enrollment_status = ${status}`
+      : sql`role = 'student' AND enrollment_status != 'none'`;
+
+    const rows = await this.db
+      .select({
+        id: users.id,
+        studentId: users.id,
+        studentName: users.name,
+        rollNumber: users.rollNumber,
+        status: users.enrollmentStatus,
+        submittedAt: users.embeddingEnrolledAt,
+      })
+      .from(users)
+      .where(whereClause)
+      .orderBy(desc(users.embeddingEnrolledAt))
+      .limit(limit)
+      .offset(offset);
+
+    const [countRow] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .where(whereClause);
+
+    return { data: rows, total: countRow?.count ?? 0, page, limit };
   }
 }

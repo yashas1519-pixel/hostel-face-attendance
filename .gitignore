@@ -7,3 +7,5 @@ build/
 *.tsbuildinfo
 .DS_Store
 design_reference.png
+.vercel
+.env*

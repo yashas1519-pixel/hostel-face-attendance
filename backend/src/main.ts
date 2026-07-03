@@ -8,7 +8,7 @@ async function bootstrap() {
   const allowedOrigins = [
     'https://admin-theta-beryl-35.vercel.app',
     'https://admin-yashu1t508s-projects.vercel.app',
-    /https:\/\/admin-.*\.vercel\.app$/,           // any preview deploy
+    /https:\/\/admin-.*\.vercel\.app$/,
     'http://localhost:3001',
     'http://localhost:4200',
   ];

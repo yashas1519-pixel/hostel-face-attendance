@@ -209,21 +209,69 @@ export class AttendanceService {
     return { data: rows, total: countRow?.count ?? 0, page, limit };
   }
 
-  async getAdminView(hostelId: string, page: number, limit: number) {
+  async getAdminView(
+    hostelId: string | undefined,
+    status: string | undefined,
+    dateFrom: string | undefined,
+    dateTo: string | undefined,
+    page: number,
+    limit: number,
+  ) {
     const offset = (page - 1) * limit;
 
-    const rows = await this.db
-      .select()
+    // Build where conditions dynamically
+    const conditions: ReturnType<typeof eq>[] = [];
+    if (hostelId) conditions.push(eq(attendanceRecords.hostelId, hostelId));
+    if (status)
+      conditions.push(
+        eq(
+          attendanceRecords.status,
+          status as 'present' | 'rejected' | 'flagged',
+        ),
+      );
+    if (dateFrom)
+      conditions.push(sql`${attendanceRecords.markedAt} >= ${dateFrom}::timestamptz` as ReturnType<typeof eq>);
+    if (dateTo)
+      conditions.push(sql`${attendanceRecords.markedAt} <= ${dateTo}::timestamptz` as ReturnType<typeof eq>);
+
+    const where =
+      conditions.length > 0
+        ? conditions.length === 1
+          ? conditions[0]
+          : and(...conditions)
+        : undefined;
+
+    const query = this.db
+      .select({
+        id: attendanceRecords.id,
+        studentId: attendanceRecords.studentId,
+        hostelId: attendanceRecords.hostelId,
+        markedAt: attendanceRecords.markedAt,
+        faceMatchScore: attendanceRecords.faceMatchScore,
+        livenessScore: attendanceRecords.parallaxRatio,
+        locationVerified: attendanceRecords.mockLocationFlag,
+        status: attendanceRecords.status,
+        rejectionReason: attendanceRecords.rejectionReason,
+        studentName: users.name,
+        rollNumber: users.rollNumber,
+        hostelName: hostels.name,
+      })
       .from(attendanceRecords)
-      .where(eq(attendanceRecords.hostelId, hostelId))
+      .leftJoin(users, eq(attendanceRecords.studentId, users.id))
+      .leftJoin(hostels, eq(attendanceRecords.hostelId, hostels.id))
       .orderBy(desc(attendanceRecords.markedAt))
       .limit(limit)
       .offset(offset);
 
-    const [countRow] = await this.db
+    const rows = where ? await query.where(where) : await query;
+
+    const countQuery = this.db
       .select({ count: sql<number>`count(*)::int` })
-      .from(attendanceRecords)
-      .where(eq(attendanceRecords.hostelId, hostelId));
+      .from(attendanceRecords);
+
+    const [countRow] = where
+      ? await countQuery.where(where)
+      : await countQuery;
 
     return { data: rows, total: countRow?.count ?? 0, page, limit };
   }

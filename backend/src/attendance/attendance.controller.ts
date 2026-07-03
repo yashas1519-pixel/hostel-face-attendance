@@ -35,13 +35,24 @@ export class AttendanceController {
     return this.attendance.getHistory(req.user.sub, page, Math.min(limit, 100));
   }
 
-  @Get('admin/attendance/:hostelId')
+  // hostelId now optional query param — frontend calls /admin/attendance?hostelId=...
+  @Get('admin/attendance')
   @Auth('admin')
   adminView(
-    @Param('hostelId', ParseUUIDPipe) hostelId: string,
+    @Query('hostelId') hostelId: string | undefined,
+    @Query('status') status: string | undefined,
+    @Query('dateFrom') dateFrom: string | undefined,
+    @Query('dateTo') dateTo: string | undefined,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
-    return this.attendance.getAdminView(hostelId, page, Math.min(limit, 100));
+    return this.attendance.getAdminView(
+      hostelId,
+      status,
+      dateFrom,
+      dateTo,
+      page,
+      Math.min(limit, 100),
+    );
   }
 }
