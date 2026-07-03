@@ -102,7 +102,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 // ── Hostels ────────────────────────────────────────────────
 export async function getHostels(): Promise<Hostel[]> {
   const res = await fetchWithAuth("/admin/hostels");
-  return handleResponse(res);
+  const paginated = await handleResponse<PaginatedResponse<Hostel>>(res);
+  return paginated.data;
 }
 
 export async function createHostel(data: {
