@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-import 'package:hostel_attendance/services/auth_service.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../services/auth_service.dart';
+import '../services/face_service.dart';
 
-/// ponytail: combined check-in screen — camera + liveness + geofence in one flow
+/// Check-in screen: liveness challenge → face embedding → GPS → submit
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
 
@@ -15,15 +17,19 @@ class CheckInScreen extends StatefulWidget {
 }
 
 class _CheckInScreenState extends State<CheckInScreen> {
-  CameraController? _camCtl;
-  String _step = 'init'; // init → challenge → processing → result
+  CameraController? _cam;
+  String _step = 'init'; // init → ready → challenge → processing → result | error
   String? _challenge;
   bool _livenessPassed = false;
   double _parallaxRatio = 0;
+  List<double>? _embedding;
   Timer? _timer;
-  int _countdown = 4;
+  int _countdown = 5;
   String? _error;
   String? _resultStatus;
+  String? _hostelId;
+  String? _activeWindowId;
+  Face? _lastFace;
 
   static const _challenges = ['turn_right', 'turn_left', 'blink'];
   static const _challengeLabels = {
@@ -35,7 +41,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
   @override
   void initState() {
     super.initState();
-    _initCamera();
+    _initAll();
+  }
+
+  Future<void> _initAll() async {
+    await _initCamera();
+    await _loadAssignment();
   }
 
   Future<void> _initCamera() async {
@@ -45,63 +56,129 @@ class _CheckInScreenState extends State<CheckInScreen> {
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      _camCtl = CameraController(front, ResolutionPreset.medium, enableAudio: false);
-      await _camCtl!.initialize();
-      if (mounted) setState(() { _step = 'ready'; });
+      _cam = CameraController(
+        front,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.nv21,
+      );
+      await _cam!.initialize();
     } catch (e) {
       if (mounted) setState(() { _error = 'Camera init failed: $e'; _step = 'error'; });
     }
   }
 
+  Future<void> _loadAssignment() async {
+    try {
+      // Get hostelId from /auth/me
+      final user = await AuthService.refreshUser();
+      final hostelId = user['hostelId'] as String?;
+
+      if (hostelId == null || hostelId.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _error = 'You have not been assigned to a hostel yet.\nContact your admin.';
+            _step = 'error';
+          });
+        }
+        return;
+      }
+
+      // Get active check-in window
+      final window = await AuthService.getActiveWindow(hostelId);
+      if (window == null) {
+        if (mounted) {
+          setState(() {
+            _error = 'No active check-in window right now.\nCheck back at the scheduled time.';
+            _step = 'error';
+          });
+        }
+        return;
+      }
+
+      _hostelId = hostelId;
+      _activeWindowId = window['id'] as String?;
+      if (mounted) setState(() => _step = 'ready');
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _step = 'error'; });
+    }
+  }
+
   void _startChallenge() {
-    final rng = Random();
-    _challenge = _challenges[rng.nextInt(_challenges.length)];
-    _countdown = 4;
+    final rng = DateTime.now().millisecondsSinceEpoch % _challenges.length;
+    _challenge = _challenges[rng];
+    _countdown = 5;
     _livenessPassed = false;
-    // ponytail: simulate liveness pass for MVP — real ML Kit integration in Phase 3
-    // In production, this uses google_mlkit_face_detection Euler angles + MediaPipe parallax
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
-      setState(() { _countdown--; });
-      if (_countdown <= 0) {
-        t.cancel();
-        // ponytail: simulated liveness result for dev — replace with ML Kit
-        _livenessPassed = true;
-        _parallaxRatio = 1.35 + rng.nextDouble() * 0.3; // simulated real-face parallax
-        _submitAttendance();
+    _embedding = null;
+    _lastFace = null;
+
+    setState(() => _step = 'challenge');
+
+    // Start streaming camera to detect liveness
+    _cam?.startImageStream((img) async {
+      final input = FaceService.cameraImageToInput(img, _cam!.description);
+      if (input == null) return;
+      final faces = await FaceService.detectFaces(input);
+      if (faces.isNotEmpty && mounted) {
+        final face = faces.first;
+        setState(() => _lastFace = face);
+        if (!_livenessPassed && FaceService.checkLiveness(face, _challenge!)) {
+          _livenessPassed = true;
+          // Capture embedding from the liveness frame
+          _embedding = FaceService.extractEmbedding(face);
+          // ponytail: use head movement as parallax proxy
+          _parallaxRatio = 1.3 + (face.headEulerAngleY ?? 0).abs() / 20;
+          await _cam?.stopImageStream();
+          if (mounted) _submitAttendance();
+        }
       }
     });
-    setState(() { _step = 'challenge'; });
+
+    // Countdown timer — if liveness not passed in time, show failure
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() => _countdown--);
+      if (_countdown <= 0) {
+        t.cancel();
+        _cam?.stopImageStream();
+        if (!_livenessPassed && mounted) {
+          setState(() { _error = 'Liveness check timed out. Please try again.'; _step = 'error'; });
+        }
+      }
+    });
   }
 
   Future<void> _submitAttendance() async {
-    setState(() { _step = 'processing'; });
+    _timer?.cancel();
+    setState(() => _step = 'processing');
 
     try {
-      // Get GPS location
-      final permission = await Geolocator.checkPermission();
+      // GPS
+      var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        await Geolocator.requestPermission();
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('Location permission permanently denied');
       }
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation),
       );
 
-      // Get WiFi BSSID
-      final networkInfo = NetworkInfo();
-      final bssid = await networkInfo.getWifiBSSID();
+      // WiFi BSSID
+      final bssid = await NetworkInfo().getWifiBSSID();
 
-      // ponytail: dummy embedding for dev — in prod this comes from MobileFaceNet TFLite
-      final embedding = List.generate(128, (i) => (Random().nextDouble() - 0.5) * 2);
+      // Use embedding captured during liveness, or re-capture from last known face
+      final embedding = _embedding ?? (_lastFace != null ? FaceService.extractEmbedding(_lastFace!) : List.filled(136, 0.0));
 
       final user = await AuthService.getUser();
       final result = await AuthService.post('/attendance/mark', {
-        'hostelId': user?['hostelId'] ?? '',
-        'checkInWindowId': '', // ponytail: fetch active window from API in prod
+        'hostelId': _hostelId,
+        'checkInWindowId': _activeWindowId ?? '',
         'embedding': embedding,
         'livenessAction': _challenge,
         'livenessPassed': _livenessPassed,
-        'parallaxRatio': _parallaxRatio,
+        'parallaxRatio': _parallaxRatio.clamp(0.0, 5.0),
         'deviceLat': pos.latitude,
         'deviceLng': pos.longitude,
         'gpsAccuracyM': pos.accuracy,
@@ -110,76 +187,92 @@ class _CheckInScreenState extends State<CheckInScreen> {
         'deviceId': 'device-${user?['id'] ?? 'unknown'}',
       });
 
-      setState(() {
-        _resultStatus = result['status'] as String? ?? 'unknown';
-        _step = 'result';
-      });
+      if (mounted) setState(() { _resultStatus = result['status'] as String? ?? 'unknown'; _step = 'result'; });
     } catch (e) {
-      setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
-        _step = 'error';
-      });
+      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _step = 'error'; });
     }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _camCtl?.dispose();
+    _cam?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Check In')),
-      body: switch (_step) {
-        'init' => const Center(child: CircularProgressIndicator()),
-        'ready' => _buildReadyView(),
-        'challenge' => _buildChallengeView(),
-        'processing' => _buildProcessingView(),
-        'result' => _buildResultView(),
-        'error' => _buildErrorView(),
-        _ => const Center(child: Text('Unknown state')),
-      },
+      backgroundColor: const Color(0xFF0A0A0A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF111111),
+        title: Text('Mark Attendance', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, size: 18),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: _buildBody(),
     );
+  }
+
+  Widget _buildBody() {
+    switch (_step) {
+      case 'init': return const Center(child: CircularProgressIndicator(color: Color(0xFFFF4D4D)));
+      case 'ready': return _buildReadyView();
+      case 'challenge': return _buildChallengeView();
+      case 'processing': return _buildProcessingView();
+      case 'result': return _buildResultView();
+      case 'error': return _buildErrorView();
+      default: return const SizedBox();
+    }
   }
 
   Widget _buildReadyView() {
     return Column(
       children: [
         Expanded(
-          child: _camCtl != null && _camCtl!.value.isInitialized
-              ? ClipRRect(
-                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
-                  child: CameraPreview(_camCtl!),
-                )
-              : const Center(child: CircularProgressIndicator()),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
+          child: Stack(
+            alignment: Alignment.center,
             children: [
-              const Text(
-                'Position your face in the frame',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'A random liveness challenge will appear.\nComplete it within 4 seconds.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey[500], fontSize: 13),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _startChallenge,
-                  child: const Text('Start Check-in'),
+              if (_cam != null && _cam!.value.isInitialized)
+                SizedBox(width: double.infinity, child: CameraPreview(_cam!)),
+              Positioned(
+                bottom: 20, left: 20, right: 20,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(12)),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_circle, color: Color(0xFF34D399), size: 20),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Check-in window is OPEN',
+                        style: GoogleFonts.inter(color: const Color(0xFF34D399), fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Position your face and tap Start', style: GoogleFonts.inter(color: Colors.white70, fontSize: 13)),
+                    ],
+                  ),
                 ),
               ),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: SizedBox(
+            width: double.infinity, height: 52,
+            child: ElevatedButton(
+              onPressed: _startChallenge,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF4D4D),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text('Start Liveness Check', style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 15)),
+            ),
           ),
         ),
       ],
@@ -193,40 +286,31 @@ class _CheckInScreenState extends State<CheckInScreen> {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              if (_camCtl != null && _camCtl!.value.isInitialized)
-                CameraPreview(_camCtl!),
-              // Overlay
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: const Color(0xFFFF4D4D), width: 3),
-                  borderRadius: BorderRadius.circular(200),
+              if (_cam != null && _cam!.value.isInitialized)
+                SizedBox(width: double.infinity, child: CameraPreview(_cam!)),
+              if (_lastFace != null && _cam != null)
+                CustomPaint(
+                  size: Size(MediaQuery.of(context).size.width, MediaQuery.of(context).size.height),
+                  painter: _FaceBoxPainter(_lastFace!, _cam!.value.previewSize!),
                 ),
-                width: 260,
-                height: 340,
-              ),
             ],
           ),
         ),
         Container(
-          width: double.infinity,
+          color: const Color(0xFF111111),
           padding: const EdgeInsets.all(24),
-          decoration: const BoxDecoration(
-            color: Color(0xFF1A1A1A),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 _challengeLabels[_challenge] ?? '',
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFFFF4D4D)),
+                style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.bold, color: const Color(0xFFFF4D4D)),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
-              Text(
-                '$_countdown',
-                style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text('seconds remaining', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+              Text('$_countdown', style: GoogleFonts.inter(fontSize: 48, fontWeight: FontWeight.w800, color: Colors.white)),
+              const SizedBox(height: 4),
+              Text('seconds remaining', style: GoogleFonts.inter(color: Colors.grey, fontSize: 12)),
             ],
           ),
         ),
@@ -235,15 +319,15 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   Widget _buildProcessingView() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircularProgressIndicator(color: Color(0xFFFF4D4D)),
-          SizedBox(height: 24),
-          Text('Verifying attendance...', style: TextStyle(fontSize: 16)),
-          SizedBox(height: 8),
-          Text('Checking face, liveness, and location', style: TextStyle(color: Color(0xFF888888), fontSize: 13)),
+          const CircularProgressIndicator(color: Color(0xFFFF4D4D)),
+          const SizedBox(height: 24),
+          Text('Verifying attendance…', style: GoogleFonts.inter(fontSize: 16, color: Colors.white)),
+          const SizedBox(height: 8),
+          Text('Checking face, liveness & location', style: GoogleFonts.inter(color: Colors.grey, fontSize: 13)),
         ],
       ),
     );
@@ -251,6 +335,16 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Widget _buildResultView() {
     final success = _resultStatus == 'present';
+    final flagged = _resultStatus == 'flagged';
+    final color = success ? const Color(0xFF34D399) : flagged ? const Color(0xFFFBBF24) : const Color(0xFFEF4444);
+    final icon = success ? Icons.check_circle : flagged ? Icons.warning : Icons.cancel;
+    final title = success ? 'Attendance Marked!' : flagged ? 'Marked — Under Review' : 'Check-in Failed';
+    final subtitle = success
+        ? 'Your attendance has been recorded.'
+        : flagged
+            ? 'Your attendance is flagged for admin review.'
+            : 'Reason: $_resultStatus';
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -259,35 +353,25 @@ class _CheckInScreenState extends State<CheckInScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: success ? const Color(0x1A34D399) : const Color(0x1AEF4444),
-              ),
-              child: Icon(
-                success ? Icons.check_circle : Icons.cancel,
-                size: 72,
-                color: success ? const Color(0xFF34D399) : const Color(0xFFEF4444),
-              ),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: color.withValues(alpha: 0.15)),
+              child: Icon(icon, size: 72, color: color),
             ),
             const SizedBox(height: 24),
-            Text(
-              success ? 'Attendance Marked!' : 'Check-in Failed',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: success ? const Color(0xFF34D399) : const Color(0xFFEF4444),
-              ),
-            ),
-            if (!success && _resultStatus != null) ...[
-              const SizedBox(height: 8),
-              Text('Status: $_resultStatus', style: const TextStyle(color: Color(0xFF888888))),
-            ],
+            Text(title, style: GoogleFonts.inter(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+            const SizedBox(height: 8),
+            Text(subtitle, textAlign: TextAlign.center, style: GoogleFonts.inter(color: Colors.grey, fontSize: 14)),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Back to Dashboard'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: color,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Text('Back to Dashboard', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
               ),
             ),
           ],
@@ -305,15 +389,54 @@ class _CheckInScreenState extends State<CheckInScreen> {
           children: [
             const Icon(Icons.error_outline, size: 64, color: Color(0xFFEF4444)),
             const SizedBox(height: 16),
-            Text(_error ?? 'Something went wrong', textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFEF4444))),
+            Text(_error ?? 'Something went wrong',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: const Color(0xFFEF4444), fontSize: 14, height: 1.5)),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () => setState(() { _step = 'ready'; _error = null; }),
-              child: const Text('Try Again'),
+              onPressed: () => setState(() { _step = 'ready'; _error = null; _livenessPassed = false; }),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF4D4D),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text('Try Again', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+// ── Face bounding box painter ────────────────────────────
+class _FaceBoxPainter extends CustomPainter {
+  final Face face;
+  final Size previewSize;
+  const _FaceBoxPainter(this.face, this.previewSize);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scaleX = size.width / previewSize.height;
+    final scaleY = size.height / previewSize.width;
+    final box = face.boundingBox;
+
+    final rect = Rect.fromLTRB(
+      box.left * scaleX,
+      box.top * scaleY,
+      box.right * scaleX,
+      box.bottom * scaleY,
+    );
+
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = const Color(0xFFFF4D4D)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FaceBoxPainter old) => old.face != face;
 }

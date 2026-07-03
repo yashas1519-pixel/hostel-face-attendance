@@ -8,6 +8,7 @@ import styles from "./dashboard.module.css";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/dashboard/hostels", label: "Hostels", icon: "🏠" },
+  { href: "/dashboard/windows", label: "Check-in Windows", icon: "🕐" },
   { href: "/dashboard/students", label: "Students", icon: "👤" },
   { href: "/dashboard/enrollments", label: "Enrollments", icon: "📋" },
   { href: "/dashboard/attendance", label: "Attendance", icon: "✅" },

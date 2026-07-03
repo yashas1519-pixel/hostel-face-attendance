@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hostel_attendance/services/auth_service.dart';
 import 'package:hostel_attendance/screens/login_screen.dart';
 import 'package:hostel_attendance/screens/check_in_screen.dart';
+import 'package:hostel_attendance/screens/enrollment_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
   const StudentDashboard({super.key});
@@ -25,7 +26,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
   Future<void> _loadData() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final user = await AuthService.getUser();
+      // Always refresh user from server to get latest enrollmentStatus
+      final user = await AuthService.refreshUser();
       final historyRes = await AuthService.get('/attendance/history?page=1&limit=10');
       setState(() {
         _user = user;
@@ -154,14 +156,20 @@ class _StudentDashboardState extends State<StudentDashboard> {
       child: ListTile(
         leading: Icon(statusIcon, color: statusColor, size: 28),
         title: Text(statusText, style: TextStyle(color: statusColor, fontWeight: FontWeight.w600)),
-        subtitle: status == 'none'
-            ? const Text('Tap to start face enrollment', style: TextStyle(fontSize: 12))
+        subtitle: status == 'none' || status == 'rejected'
+            ? Text(
+                status == 'rejected' ? 'Tap to re-enroll' : 'Tap to start face enrollment',
+                style: const TextStyle(fontSize: 12),
+              )
             : null,
-        trailing: status == 'none'
+        trailing: status == 'none' || status == 'rejected'
             ? const Icon(Icons.arrow_forward_ios, size: 16)
             : null,
-        // ponytail: enrollment screen not built yet — placeholder tap
-        onTap: status == 'none' ? () {} : null,
+        onTap: status == 'none' || status == 'rejected'
+            ? () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const EnrollmentScreen()))
+                .then((_) => _loadData())
+            : null,
       ),
     );
   }

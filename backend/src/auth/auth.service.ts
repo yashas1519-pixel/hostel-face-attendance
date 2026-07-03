@@ -9,7 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { hash, compare } from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { DB_TOKEN, type Database } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { users, studentHostelAssignments } from '../db/schema.js';
 import type { RegisterDto, LoginDto } from './auth.dto.js';
 
 @Injectable()
@@ -90,6 +90,17 @@ export class AuthService {
       .limit(1);
 
     if (!user) throw new UnauthorizedException('User not found');
+
+    // Attach hostelId for student users (mobile app needs it)
+    if (user.role === 'student') {
+      const [assignment] = await this.db
+        .select({ hostelId: studentHostelAssignments.hostelId })
+        .from(studentHostelAssignments)
+        .where(eq(studentHostelAssignments.studentId, userId))
+        .limit(1);
+      return { ...user, hostelId: assignment?.hostelId ?? null };
+    }
+
     return user;
   }
 }

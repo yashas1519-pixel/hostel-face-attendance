@@ -13,9 +13,20 @@ export interface Hostel {
   id: string;
   name: string;
   type: "boys" | "girls";
+  collegeName: string;
   wifiBssids: string[];
-  geofence: { lat: number; lng: number }[];
-  studentCount: number;
+  boundaryPolygon: string | null; // GeoJSON string
+  createdAt: string;
+}
+
+export interface CheckInWindow {
+  id: string;
+  hostelId: string;
+  name: string;
+  startTime: string; // HH:MM
+  endTime: string;   // HH:MM
+  daysOfWeek: number[]; // 0=Sun..6=Sat
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -76,7 +87,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export async function login(
   email: string,
   password: string
-): Promise<{ token: string; admin: { name: string; email: string } }> {
+): Promise<{ token: string; user: { name: string; email: string } }> {
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/auth/login`,
     {
@@ -87,7 +98,7 @@ export async function login(
   );
   const data = await handleResponse<{
     token: string;
-    admin: { name: string; email: string };
+    user: { name: string; email: string };
   }>(res);
   setToken(data.token);
   return data;
@@ -109,10 +120,11 @@ export async function getHostels(): Promise<Hostel[]> {
 export async function createHostel(data: {
   name: string;
   type: "boys" | "girls";
+  collegeName: string;
   wifiBssids: string[];
-  geofence: { lat: number; lng: number }[];
+  boundaryPolygon: string;
 }): Promise<Hostel> {
-  const res = await fetchWithAuth("/admin/hostels", {
+  const res = await fetchWithAuth("/hostel", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -124,11 +136,12 @@ export async function updateHostel(
   data: Partial<{
     name: string;
     type: "boys" | "girls";
+    collegeName: string;
     wifiBssids: string[];
-    geofence: { lat: number; lng: number }[];
+    boundaryPolygon: string;
   }>
 ): Promise<Hostel> {
-  const res = await fetchWithAuth(`/admin/hostels/${id}`, {
+  const res = await fetchWithAuth(`/hostel/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -136,7 +149,53 @@ export async function updateHostel(
 }
 
 export async function deleteHostel(id: string): Promise<void> {
-  const res = await fetchWithAuth(`/admin/hostels/${id}`, {
+  const res = await fetchWithAuth(`/hostel/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ message: "Delete failed" }));
+    throw new ApiError(res.status, body.message);
+  }
+}
+
+// ── Check-in Windows ───────────────────────────────────────
+export async function getWindows(hostelId: string): Promise<CheckInWindow[]> {
+  const res = await fetchWithAuth(`/hostel/${hostelId}/windows`);
+  return handleResponse(res);
+}
+
+export async function createWindow(
+  hostelId: string,
+  data: {
+    name: string;
+    startTime: string;
+    endTime: string;
+    daysOfWeek: number[];
+    isActive?: boolean;
+  }
+): Promise<CheckInWindow> {
+  const res = await fetchWithAuth(`/hostel/${hostelId}/windows`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function updateWindow(
+  hostelId: string,
+  windowId: string,
+  data: Partial<{ name: string; startTime: string; endTime: string; daysOfWeek: number[]; isActive: boolean }>
+): Promise<CheckInWindow> {
+  const res = await fetchWithAuth(`/hostel/${hostelId}/windows/${windowId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteWindow(
+  hostelId: string,
+  windowId: string
+): Promise<void> {
+  const res = await fetchWithAuth(`/hostel/${hostelId}/windows/${windowId}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -160,9 +219,7 @@ export async function getEnrollments(params: {
 }
 
 export async function approveEnrollment(id: string): Promise<void> {
-  const res = await fetchWithAuth(`/admin/enrollments/${id}/approve`, {
-    method: "POST",
-  });
+  const res = await fetchWithAuth(`/admin/enrollments/${id}/approve`, { method: "POST" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: "Approve failed" }));
     throw new ApiError(res.status, body.message);
@@ -170,9 +227,7 @@ export async function approveEnrollment(id: string): Promise<void> {
 }
 
 export async function rejectEnrollment(id: string): Promise<void> {
-  const res = await fetchWithAuth(`/admin/enrollments/${id}/reject`, {
-    method: "POST",
-  });
+  const res = await fetchWithAuth(`/admin/enrollments/${id}/reject`, { method: "POST" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: "Reject failed" }));
     throw new ApiError(res.status, body.message);
