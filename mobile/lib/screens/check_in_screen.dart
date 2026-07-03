@@ -153,24 +153,58 @@ class _CheckInScreenState extends State<CheckInScreen> {
     setState(() => _step = 'processing');
 
     try {
-      // GPS
+      // ── GPS permission ──────────────────────────────────────────────────
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
       if (permission == LocationPermission.deniedForever) {
-        throw Exception('Location permission permanently denied');
+        throw Exception('Location permission permanently denied.\nEnable it in Settings → App → Permissions.');
       }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation),
-      );
 
-      // WiFi BSSID
+      // ── GPS averaging: 6 samples × 500ms = ~3 seconds (spec §2) ─────────
+      const sampleCount = 6;
+      const sampleInterval = Duration(milliseconds: 500);
+      final samples = <Position>[];
+
+      for (int i = 0; i < sampleCount; i++) {
+        final p = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+          ),
+        );
+        samples.add(p);
+        if (i < sampleCount - 1) await Future.delayed(sampleInterval);
+      }
+
+      // Centroid (averaged lat/lng)
+      final avgLat = samples.map((p) => p.latitude).reduce((a, b) => a + b) / samples.length;
+      final avgLng = samples.map((p) => p.longitude).reduce((a, b) => a + b) / samples.length;
+      final avgAccuracy = samples.map((p) => p.accuracy).reduce((a, b) => a + b) / samples.length;
+      final isMocked = samples.any((p) => p.isMocked);
+
+      // Max pairwise spread (metres) — Geolocator.distanceBetween is haversine
+      double maxSpread = 0;
+      for (int i = 0; i < samples.length; i++) {
+        for (int j = i + 1; j < samples.length; j++) {
+          final d = Geolocator.distanceBetween(
+            samples[i].latitude, samples[i].longitude,
+            samples[j].latitude, samples[j].longitude,
+          );
+          if (d > maxSpread) maxSpread = d;
+        }
+      }
+
+      // ── WiFi BSSID ───────────────────────────────────────────────────────
       final bssid = await NetworkInfo().getWifiBSSID();
 
-      // Use embedding captured during liveness, or re-capture from last known face
-      final embedding = _embedding ?? (_lastFace != null ? FaceService.extractEmbedding(_lastFace!) : List.filled(136, 0.0));
+      // ── Embedding (captured during liveness) ─────────────────────────────
+      final embedding = _embedding ??
+          (_lastFace != null
+              ? FaceService.extractEmbedding(_lastFace!)
+              : List.filled(136, 0.0));
 
+      // ── Submit ───────────────────────────────────────────────────────────
       final user = await AuthService.getUser();
       final result = await AuthService.post('/attendance/mark', {
         'hostelId': _hostelId,
@@ -179,17 +213,28 @@ class _CheckInScreenState extends State<CheckInScreen> {
         'livenessAction': _challenge,
         'livenessPassed': _livenessPassed,
         'parallaxRatio': _parallaxRatio.clamp(0.0, 5.0),
-        'deviceLat': pos.latitude,
-        'deviceLng': pos.longitude,
-        'gpsAccuracyM': pos.accuracy,
-        'wifiBssid': bssid ?? '',
-        'mockLocationFlag': pos.isMocked,
+        'deviceLat': avgLat,
+        'deviceLng': avgLng,
+        'gpsAccuracyM': avgAccuracy,
+        'wifiBssidMatched': bssid ?? '',
+        'mockLocationFlag': isMocked,
         'deviceId': 'device-${user?['id'] ?? 'unknown'}',
+        'gpsSampleSpread': maxSpread,   // spec §2: max pairwise distance of samples
       });
 
-      if (mounted) setState(() { _resultStatus = result['status'] as String? ?? 'unknown'; _step = 'result'; });
+      if (mounted) {
+        setState(() {
+          _resultStatus = result['status'] as String? ?? 'unknown';
+          _step = 'result';
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _step = 'error'; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceFirst('Exception: ', '');
+          _step = 'error';
+        });
+      }
     }
   }
 
@@ -327,7 +372,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
           const SizedBox(height: 24),
           Text('Verifying attendance…', style: GoogleFonts.inter(fontSize: 16, color: Colors.white)),
           const SizedBox(height: 8),
-          Text('Checking face, liveness & location', style: GoogleFonts.inter(color: Colors.grey, fontSize: 13)),
+          Text('Sampling GPS (3s) · Checking face & location', style: GoogleFonts.inter(color: Colors.grey, fontSize: 13)),
         ],
       ),
     );

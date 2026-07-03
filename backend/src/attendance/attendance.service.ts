@@ -15,7 +15,7 @@ import {
   users,
 } from '../db/schema.js';
 import { EnrollmentService } from '../enrollment/enrollment.service.js';
-import { pointInPolygon, cosineSimilarity } from '../lib/geo.js';
+import { pointInPolygon, cosineSimilarity, haversineMeters } from '../lib/geo.js';
 import type { MarkAttendanceDto } from './attendance.dto.js';
 
 interface GeoJsonPolygon {
@@ -33,13 +33,9 @@ export class AttendanceService {
   ) {}
 
   async markAttendance(studentId: string, dto: MarkAttendanceDto) {
-    // ── Pre-checks: student exists, is enrolled, is assigned to this hostel ──
+    // ── Pre-checks: student exists, enrolled, assigned to this hostel ──────
     const [student] = await this.db
-      .select({
-        id: users.id,
-        faceEmbedding: users.faceEmbedding,
-        enrollmentStatus: users.enrollmentStatus,
-      })
+      .select({ id: users.id, faceEmbedding: users.faceEmbedding, enrollmentStatus: users.enrollmentStatus })
       .from(users)
       .where(eq(users.id, studentId))
       .limit(1);
@@ -51,16 +47,12 @@ export class AttendanceService {
     const [assignment] = await this.db
       .select({ id: studentHostelAssignments.id })
       .from(studentHostelAssignments)
-      .where(
-        and(
-          eq(studentHostelAssignments.studentId, studentId),
-          eq(studentHostelAssignments.hostelId, dto.hostelId),
-        ),
-      )
+      .where(and(
+        eq(studentHostelAssignments.studentId, studentId),
+        eq(studentHostelAssignments.hostelId, dto.hostelId),
+      ))
       .limit(1);
-    if (!assignment) {
-      throw new BadRequestException('Student not assigned to this hostel');
-    }
+    if (!assignment) throw new BadRequestException('Student not assigned to this hostel');
 
     const [hostel] = await this.db
       .select()
@@ -68,104 +60,137 @@ export class AttendanceService {
       .where(eq(hostels.id, dto.hostelId))
       .limit(1);
     if (!hostel) throw new NotFoundException('Hostel not found');
+    if (!hostel.boundaryPolygon) throw new BadRequestException('Hostel geofence not configured');
 
     const [window] = await this.db
       .select()
       .from(checkInWindows)
-      .where(
-        and(
-          eq(checkInWindows.id, dto.checkInWindowId),
-          eq(checkInWindows.hostelId, dto.hostelId),
-          eq(checkInWindows.isActive, true),
-        ),
-      )
+      .where(and(
+        eq(checkInWindows.id, dto.checkInWindowId),
+        eq(checkInWindows.hostelId, dto.hostelId),
+        eq(checkInWindows.isActive, true),
+      ))
       .limit(1);
     if (!window) throw new NotFoundException('Check-in window not found or inactive');
 
-    let rejected = false;
     let status: 'present' | 'rejected' | 'flagged' = 'present';
     let rejectionReason: string | null = null;
+    const reject = (reason: string) => { status = 'rejected'; rejectionReason = reason; };
 
-    const reject = (reason: string) => {
-      rejected = true;
-      status = 'rejected';
-      rejectionReason = reason;
-    };
-
-    // ── Step 1: Time window check (server clock) ──
+    // ── Step 1: Time window (server clock, never device clock) ─────────────
     const now = new Date();
-    const dayOfWeek = now.getUTCDay();
     const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
-
-    if (!window.daysOfWeek.includes(dayOfWeek)) {
+    if (!window.daysOfWeek.includes(now.getUTCDay())) {
       reject('Check-in not available today');
     } else if (currentTime < window.startTime || currentTime > window.endTime) {
       reject(`Outside check-in window (${window.startTime}–${window.endTime})`);
     }
 
-    // ── Step 2: Face match (cosine similarity ≥ 0.65) ──
-    const storedEmbedding = this.enrollmentService.decryptEmbedding(
-      student.faceEmbedding!,
-    );
-    const faceMatchScore = cosineSimilarity(dto.embedding, storedEmbedding);
-    if (!rejected && faceMatchScore < 0.65) {
-      reject(`Face match too low: ${faceMatchScore.toFixed(3)}`);
+    // ── Step 2: GPS sample spread ≤ 8m (spec §2) ──────────────────────────
+    // Client reports spread; server trusts it for the decision (client's own sensor data).
+    // A spoofed "frozen" point shows 0 spread, but we only reject if > 8m
+    // (jittery GPS stays below 8m on a real device; spoofed straight-line jumps exceed it).
+    if (status === 'present' && dto.gpsSampleSpread > 8) {
+      reject(`GPS sample spread too high: ${dto.gpsSampleSpread.toFixed(1)}m (max 8m)`);
     }
 
-    // ── Step 3: Liveness + parallax ──
-    if (!rejected && !dto.livenessPassed) {
-      reject('Liveness check failed');
-    }
-    if (
-      !rejected &&
-      (dto.parallaxRatio === undefined || dto.parallaxRatio <= 1.3)
-    ) {
-      reject(
-        `Parallax ratio too low: ${dto.parallaxRatio?.toFixed(2) ?? 'missing'}`,
-      );
-    }
-
-    // ── Step 4: Geofence (point-in-polygon) ──
-    if (!rejected) {
+    // ── Step 3: Averaged point inside building polygon (spec §3) ───────────
+    // deviceLat/Lng from the DTO is the CENTROID of the GPS samples (client averaged).
+    // hostel IS the building — spec §1 note: no separate buildings table in our schema.
+    if (status === 'present') {
       const polygon = JSON.parse(hostel.boundaryPolygon) as GeoJsonPolygon;
-      // ponytail: GeoJSON coordinates[0] is the outer ring
       const ring = polygon.coordinates[0]!;
       if (!pointInPolygon([dto.deviceLng, dto.deviceLat], ring)) {
         reject('Device location outside hostel geofence');
       }
     }
 
-    // ── Step 5: Mock location check ──
-    if (!rejected && dto.mockLocationFlag) {
+    // ── Step 4: GPS accuracy ≤ 20m AND (WiFi matches OR accuracy ≤ 10m) ────
+    if (status === 'present') {
+      const accuracy = dto.gpsAccuracyM ?? Infinity;
+      if (accuracy > 20) {
+        reject(`GPS accuracy too low: ${accuracy.toFixed(1)}m (need ≤ 20m)`);
+      } else {
+        const wifiMatches =
+          !!dto.wifiBssidMatched &&
+          !!(hostel.wifiBssids ?? []).includes(dto.wifiBssidMatched);
+        const highPrecisionGps = accuracy <= 10;
+        if (!wifiMatches && !highPrecisionGps) {
+          reject(`Location not verified: WiFi BSSID not in whitelist and GPS accuracy ${accuracy.toFixed(1)}m > 10m`);
+        }
+      }
+    }
+
+    // ── Step 5: Mock location check ────────────────────────────────────────
+    if (status === 'present' && dto.mockLocationFlag) {
       reject('Mock location detected');
     }
 
-    // ── Step 6: Buddy-punching detector ──
-    if (!rejected) {
+    // ── Step 6: Velocity/teleport check (spec §5) ──────────────────────────
+    // Server computes implied speed from DB — client value (dto.impliedSpeed) is for audit only.
+    let impliedSpeedMps: number | null = null;
+    if (status === 'present') {
+      const [lastRecord] = await this.db
+        .select({
+          deviceLat: attendanceRecords.deviceLat,
+          deviceLng: attendanceRecords.deviceLng,
+          markedAt: attendanceRecords.markedAt,
+        })
+        .from(attendanceRecords)
+        .where(eq(attendanceRecords.studentId, studentId))
+        .orderBy(desc(attendanceRecords.markedAt))
+        .limit(1);
+
+      if (lastRecord) {
+        const distM = haversineMeters(
+          lastRecord.deviceLat, lastRecord.deviceLng,
+          dto.deviceLat, dto.deviceLng,
+        );
+        const secsElapsed = (now.getTime() - lastRecord.markedAt.getTime()) / 1000;
+        impliedSpeedMps = secsElapsed > 0 ? distM / secsElapsed : 0;
+
+        if (impliedSpeedMps > 40) {
+          reject(`Implied speed ${impliedSpeedMps.toFixed(1)} m/s exceeds 40 m/s — possible teleport`);
+          this.logger.warn(`Teleport flag: student=${studentId}, speed=${impliedSpeedMps.toFixed(1)}m/s`);
+        }
+      }
+    }
+
+    // ── Step 7: Face match (cosine similarity ≥ 0.65) ─────────────────────
+    const storedEmbedding = this.enrollmentService.decryptEmbedding(student.faceEmbedding!);
+    const faceMatchScore = cosineSimilarity(dto.embedding, storedEmbedding);
+    if (status === 'present' && faceMatchScore < 0.65) {
+      reject(`Face match too low: ${faceMatchScore.toFixed(3)}`);
+    }
+
+    // ── Step 8: Liveness + parallax ────────────────────────────────────────
+    if (status === 'present' && !dto.livenessPassed) {
+      reject('Liveness check failed');
+    }
+    if (status === 'present' && (dto.parallaxRatio === undefined || dto.parallaxRatio <= 1.3)) {
+      reject(`Parallax ratio too low: ${dto.parallaxRatio?.toFixed(2) ?? 'missing'}`);
+    }
+
+    // ── Step 9: Buddy-punching detector ────────────────────────────────────
+    if (status === 'present') {
       const todayStart = new Date(now);
       todayStart.setUTCHours(0, 0, 0, 0);
-
       const [deviceCount] = await this.db
         .select({ count: sql<number>`count(DISTINCT ${attendanceRecords.studentId})::int` })
         .from(attendanceRecords)
-        .where(
-          and(
-            eq(attendanceRecords.deviceId, dto.deviceId),
-            gte(attendanceRecords.markedAt, todayStart),
-          ),
-        );
-
+        .where(and(
+          eq(attendanceRecords.deviceId, dto.deviceId),
+          gte(attendanceRecords.markedAt, todayStart),
+        ));
       if ((deviceCount?.count ?? 0) >= 3) {
         // ponytail: flag for review, don't auto-reject
         status = 'flagged';
         rejectionReason = 'Device used by 3+ students today — possible buddy-punching';
-        this.logger.warn(
-          `Buddy-punch flag: device=${dto.deviceId}, student=${studentId}`,
-        );
+        this.logger.warn(`Buddy-punch flag: device=${dto.deviceId}, student=${studentId}`);
       }
     }
 
-    // ── Step 7: Insert record ──
+    // ── Step 10: Insert record with all new fields ─────────────────────────
     const [record] = await this.db
       .insert(attendanceRecords)
       .values({
@@ -179,6 +204,8 @@ export class AttendanceService {
         deviceLat: dto.deviceLat,
         deviceLng: dto.deviceLng,
         gpsAccuracyM: dto.gpsAccuracyM ?? null,
+        gpsSampleSpreadM: dto.gpsSampleSpread,
+        impliedSpeedMps,
         wifiBssidMatched: dto.wifiBssidMatched ?? null,
         mockLocationFlag: dto.mockLocationFlag,
         deviceId: dto.deviceId,

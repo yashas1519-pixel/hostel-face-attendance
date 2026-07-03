@@ -125,6 +125,9 @@ export const attendanceRecords = pgTable('attendance_records', {
   deviceLat: doublePrecision('device_lat').notNull(),
   deviceLng: doublePrecision('device_lng').notNull(),
   gpsAccuracyM: real('gps_accuracy_m'),
+  // spec §6: building_id maps to hostelId in our schema (hostel IS the building)
+  gpsSampleSpreadM: real('gps_sample_spread_m'),   // max pairwise distance of GPS samples
+  impliedSpeedMps: real('implied_speed_mps'),       // haversine(prev→curr) / secs_elapsed
   wifiBssidMatched: text('wifi_bssid_matched'),
   mockLocationFlag: boolean('mock_location_flag').notNull().default(false),
   deviceId: text('device_id').notNull(),

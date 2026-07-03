@@ -51,4 +51,21 @@ export class MarkAttendanceDto {
   @IsString()
   @IsNotEmpty()
   deviceId!: string;
+
+  /**
+   * Max pairwise haversine distance (metres) across the client's GPS samples.
+   * Client samples location every ~500ms for ~3s and reports the spread.
+   * Server rejects if > 8m (spec §2).
+   */
+  @IsNumber()
+  gpsSampleSpread!: number;
+
+  /**
+   * Client-estimated speed (m/s) since last known location.
+   * Optional — server ALWAYS recomputes this from DB for the authoritative check.
+   * Included here for audit logging only.
+   */
+  @IsOptional()
+  @IsNumber()
+  impliedSpeed?: number;
 }
