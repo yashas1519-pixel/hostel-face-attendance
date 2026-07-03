@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { fetchWithAuth } from "@/lib/auth";
 import { logout } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
@@ -48,6 +49,7 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export default function StudentPage() {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("attendance");
   const [user, setUser] = useState<UserProfile | null>(null);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
@@ -76,6 +78,12 @@ export default function StudentPage() {
       setUser(me);
       setAttendance(att.data ?? []);
       setLeaves(lv.data ?? []);
+
+      // First-time login: redirect to face enrollment if not yet enrolled
+      if (me.enrollmentStatus === "none" || me.enrollmentStatus === "rejected") {
+        router.push("/student/enroll");
+        return;
+      }
     } catch {
       toast("Failed to load data", "error");
     } finally {
@@ -139,6 +147,30 @@ export default function StudentPage() {
         </div>
         <button className={styles.logoutBtn} onClick={logout}>Sign out</button>
       </header>
+
+      {/* Enrollment status banner */}
+      {user?.enrollmentStatus === "pending" && (
+        <div style={{
+          background: "rgba(251,191,36,0.08)",
+          border: "1px solid rgba(251,191,36,0.3)",
+          borderRadius: 14,
+          padding: "14px 20px",
+          marginBottom: 20,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+        }}>
+          <span style={{ fontSize: 20 }}>⏳</span>
+          <div>
+            <p style={{ margin: 0, color: "#fbbf24", fontWeight: 600, fontSize: 14 }}>
+              Face enrollment pending admin approval
+            </p>
+            <p style={{ margin: 0, color: "#78716c", fontSize: 12, marginTop: 2 }}>
+              You can browse your dashboard, but attendance marking via mobile app requires approval.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Status cards */}
       <div className={styles.cards}>
