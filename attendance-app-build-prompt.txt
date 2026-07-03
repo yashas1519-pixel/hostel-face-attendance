@@ -1,0 +1,26 @@
+I've attached a complete architecture and technical design document (PDF) for a mobile student-attendance app. Read it fully before writing any code, then help me build it.
+
+PROJECT: A Flutter mobile app + NestJS backend that marks student attendance only after passing three checks: (1) on-device face identity match against an enrolled reference, (2) an active liveness challenge (random head-turn/blink prompt) verified with a motion-parallax depth check, and (3) a geofence + time-window check confirming the student is on campus during class hours. Full technical spec, exact thresholds, database schema, and API contracts are all in the attached PDF — treat it as the source of truth, not a rough guide.
+
+WHAT I NEED FROM YOU, IN ORDER:
+
+1. Confirm you've read the architecture doc and summarize back the three verification layers and the 1:1-verification design decision in your own words, so I know we're aligned before any code gets written.
+
+2. Set up the project structure: a Flutter app and a NestJS backend, as two folders in one repo. Use the exact tech stack from Section 3 of the PDF — don't substitute different libraries or frameworks without telling me why first.
+
+3. Implement the backend first:
+   - PostgreSQL + PostGIS schema exactly as specified in Section 10.
+   - The 8 REST endpoints from Section 11, including the full server-side validation sequence for POST /attendance/mark (reject at first failing check, log the specific reason).
+   - AES-256 encryption for stored face embeddings, using a key management approach you'd recommend for a small-to-mid deployment (I don't have AWS KMS set up yet — suggest an appropriate alternative for now and note it as a placeholder to upgrade later).
+
+4. Then implement the mobile app:
+   - Enrollment flow (5-photo capture, quality checks, averaged embedding) per Section 5.
+   - The liveness challenge UI and logic per Section 6, including the parallax calculation in Section 6.3 — implement this exactly as specified, it's the primary anti-spoofing signal.
+   - Face embedding generation and matching per Section 7.
+   - Geofencing per Section 8 (GPS polygon check + WiFi BSSID match).
+
+5. Flag anything in the spec that seems ambiguous or that you'd genuinely do differently, and explain why, before you build around it — don't silently deviate from the document.
+
+6. Don't skip the validation/rejection logic to get a demo working faster. The rejection reasons and audit logging are as important as the happy path — this is a system whose entire purpose is resisting spoofing, so a version that only handles the success case isn't a usable first draft.
+
+Ask me any clarifying questions you need before starting, especially about deployment target (I'm leaning toward Supabase for the MVP per Section 3, but tell me if that's a bad fit for what you're seeing) and about how many students/classes this needs to handle at pilot scale.

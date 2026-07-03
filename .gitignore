@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+.next/
+dist/
+build/
+*.tsbuildinfo
+.DS_Store
+design_reference.png
