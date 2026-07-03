@@ -87,7 +87,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export async function login(
   email: string,
   password: string
-): Promise<{ token: string; user: { name: string; email: string; role: string } }> {
+): Promise<{ accessToken: string; refreshToken: string; user: { name: string; email: string; role: string } }> {
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/auth/login`,
     {
@@ -97,11 +97,13 @@ export async function login(
     }
   );
   const data = await handleResponse<{
-    token: string;
+    accessToken: string;
+    refreshToken: string;
     user: { name: string; email: string; role: string };
   }>(res);
 
-  setToken(data.token);
+  // Store both tokens — refresh token enables silent renewal every 15min
+  setToken(data.accessToken, data.refreshToken);
   return data;
 }
 
