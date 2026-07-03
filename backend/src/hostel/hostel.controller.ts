@@ -11,6 +11,7 @@ import {
   ParseIntPipe,
   Req,
   Inject,
+  NotFoundException,
 } from '@nestjs/common';
 import { eq, sql, and } from 'drizzle-orm';
 import { Auth } from '../auth/roles.guard.js';
@@ -177,5 +178,36 @@ export class HostelController {
       .where(eq(users.role, 'student'));
 
     return { data: rows, total: countRow?.count ?? 0, page, limit };
+  }
+
+  @Post('admin/students/:id/assign')
+  @Auth('admin')
+  async assignStudentToHostel(
+    @Param('id', ParseUUIDPipe) studentId: string,
+    @Body('hostelId') hostelId: string | null,
+    @Req() req: { user: JwtPayload },
+  ) {
+    // Remove any existing assignment first
+    await this.db
+      .delete(studentHostelAssignments)
+      .where(eq(studentHostelAssignments.studentId, studentId));
+
+    if (hostelId) {
+      // Verify hostel exists
+      const [hostel] = await this.db
+        .select({ id: hostels.id })
+        .from(hostels)
+        .where(eq(hostels.id, hostelId))
+        .limit(1);
+      if (!hostel) throw new NotFoundException('Hostel not found');
+
+      await this.db.insert(studentHostelAssignments).values({
+        studentId,
+        hostelId,
+        assignedBy: req.user.sub,
+      });
+    }
+
+    return { assigned: !!hostelId };
   }
 }
