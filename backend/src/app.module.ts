@@ -4,6 +4,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { HostelModule } from './hostel/hostel.module.js';
 import { EnrollmentModule } from './enrollment/enrollment.module.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
+import { LeaveModule } from './leave/leave.module.js';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { AttendanceModule } from './attendance/attendance.module.js';
     HostelModule,
     EnrollmentModule,
     AttendanceModule,
+    LeaveModule,
   ],
 })
 export class AppModule {}

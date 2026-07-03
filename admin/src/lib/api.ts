@@ -87,7 +87,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export async function login(
   email: string,
   password: string
-): Promise<{ token: string; user: { name: string; email: string } }> {
+): Promise<{ token: string; user: { name: string; email: string; role: string } }> {
   const res = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/auth/login`,
     {
@@ -100,11 +100,6 @@ export async function login(
     token: string;
     user: { name: string; email: string; role: string };
   }>(res);
-
-  // Admin panel only — reject student tokens before storing
-  if (data.user.role !== "admin") {
-    throw new ApiError(403, "Access denied: this panel is for admins only");
-  }
 
   setToken(data.token);
   return data;

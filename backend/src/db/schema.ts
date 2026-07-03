@@ -135,3 +135,31 @@ export const attendanceRecords = pgTable('attendance_records', {
   rejectionReason: text('rejection_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── Leave Requests ────────────────────────────────────────────────────
+export const leaveStatusEnum = pgEnum('leave_status', [
+  'pending',
+  'approved',
+  'rejected',
+]);
+
+export const leaveRequests = pgTable('leave_requests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  studentId: uuid('student_id')
+    .notNull()
+    .references(() => users.id),
+  hostelId: uuid('hostel_id')
+    .notNull()
+    .references(() => hostels.id),
+  fromDate: text('from_date').notNull(),   // 'YYYY-MM-DD'
+  toDate: text('to_date').notNull(),       // 'YYYY-MM-DD'
+  reason: text('reason').notNull(),
+  status: leaveStatusEnum('status').notNull().default('pending'),
+  adminNote: text('admin_note'),           // rejection reason or approval note
+  returnedEarlyAt: timestamp('returned_early_at', { withTimezone: true }), // null = not returned early
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdateFn(() => new Date()),
+});

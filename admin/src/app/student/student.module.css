@@ -1,0 +1,196 @@
+.page {
+  min-height: 100vh;
+  background: #0A0A0A;
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+  padding: 0 0 80px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid #1f1f1f;
+  position: sticky;
+  top: 0;
+  background: #0A0A0A;
+  z-index: 10;
+}
+.headerLeft { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 28px; }
+.name { font-size: 17px; font-weight: 700; margin: 0; }
+.roll { font-size: 12px; color: #666; margin: 2px 0 0; }
+.logoutBtn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+.logoutBtn:hover { border-color: #FF6B35; color: #FF6B35; }
+
+/* ── Stats cards ─────────────────────────────────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  padding: 20px;
+}
+.card {
+  background: #111;
+  border: 1px solid #1f1f1f;
+  border-radius: 14px;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cardNum { font-size: 28px; font-weight: 800; color: #FF6B35; }
+.cardLabel { font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ── Tabs ────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px 0;
+  border-bottom: 1px solid #1f1f1f;
+}
+.tab {
+  flex: 1;
+  padding: 12px;
+  background: transparent;
+  border: none;
+  color: #555;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+}
+.tabActive { color: #FF6B35; border-bottom-color: #FF6B35; }
+
+/* ── Section ─────────────────────────────────────────────── */
+.section { padding: 20px; }
+.empty { text-align: center; color: #444; padding: 40px 0; font-size: 14px; }
+
+/* ── Attendance list ─────────────────────────────────────── */
+.list { display: flex; flex-direction: column; gap: 10px; }
+.row {
+  background: #111;
+  border: 1px solid #1f1f1f;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.rowLeft { display: flex; align-items: center; gap: 10px; flex: 1; }
+.rowDate { font-size: 13px; color: #888; }
+.rowScore { font-size: 12px; color: #555; margin-left: auto; }
+.rowReason { width: 100%; font-size: 12px; color: #ef4444; padding-top: 4px; }
+
+/* ── Badge ───────────────────────────────────────────────── */
+.badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.badge[data-status="present"] { background: #052e16; color: #34d399; }
+.badge[data-status="approved"] { background: #052e16; color: #34d399; }
+.badge[data-status="rejected"] { background: #2d0808; color: #ef4444; }
+.badge[data-status="flagged"]  { background: #2d1a00; color: #fbbf24; }
+.badge[data-status="pending"]  { background: #1a1a00; color: #fbbf24; }
+
+/* ── Leave card / form ───────────────────────────────────── */
+.leaveCard {
+  background: #111;
+  border: 1px solid #1f1f1f;
+  border-radius: 16px;
+  padding: 20px;
+}
+.leaveTitle { font-size: 15px; font-weight: 700; margin: 0 0 16px; }
+.leaveForm { display: flex; flex-direction: column; gap: 14px; }
+.dateRow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; position: relative; }
+.label { font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.input, .textarea {
+  background: #0A0A0A;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+.input:focus, .textarea:focus { border-color: #FF6B35; }
+.textarea { resize: vertical; min-height: 80px; }
+.daysNote { font-size: 12px; color: #FF6B35; margin: -8px 0; }
+.charCount { font-size: 11px; color: #555; text-align: right; }
+.applyBtn {
+  background: #FF6B35;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 13px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.applyBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.applyBtn:not(:disabled):hover { opacity: 0.85; }
+
+/* ── Leave list rows ─────────────────────────────────────── */
+.leaveRow {
+  background: #111;
+  border: 1px solid #1f1f1f;
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.leaveRowTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.leaveDate { font-size: 13px; font-weight: 600; color: #ccc; }
+.leaveReason { font-size: 14px; color: #aaa; margin: 0; }
+.adminNote { font-size: 12px; color: #888; font-style: italic; margin: 0; }
+.earlyBtn {
+  align-self: flex-start;
+  background: #1a2e1a;
+  color: #34d399;
+  border: 1px solid #34d399;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.earlyBtn:hover { background: #0d1f0d; }
+.earlyNote { font-size: 12px; color: #34d399; margin: 0; }
+
+/* ── Skeleton ────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #111 25%, #1a1a1a 50%, #111 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 12px;
+  height: 60px;
+  margin: 20px;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

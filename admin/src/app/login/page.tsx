@@ -17,22 +17,18 @@ export default function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
-
     if (!email.trim() || !password.trim()) {
       setError("Email and password are required");
       return;
     }
-
     setLoading(true);
     try {
-      await login(email, password);
-      toast("Login successful");
-      router.push("/dashboard");
+      const { user } = await login(email, password);
+      toast(`Welcome, ${user.name}!`);
+      // Route by role — single login, two dashboards
+      router.push(user.role === "admin" ? "/dashboard" : "/student");
     } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? err.message
-          : "Unable to connect to server";
+      const msg = err instanceof ApiError ? err.message : "Unable to connect to server";
       setError(msg);
       toast(msg, "error");
     } finally {
@@ -44,8 +40,8 @@ export default function LoginPage() {
     <div className={styles.page}>
       <form className={styles.card} onSubmit={handleSubmit} noValidate>
         <div className={styles.logo}>🏠</div>
-        <h1 className={styles.title}>Admin Login</h1>
-        <p className={styles.subtitle}>Hostel Face Attendance System</p>
+        <h1 className={styles.title}>Hostel Attendance</h1>
+        <p className={styles.subtitle}>Sign in to continue</p>
 
         {error && (
           <div className={styles.error} role="alert">
@@ -54,14 +50,12 @@ export default function LoginPage() {
         )}
 
         <div className="form-group">
-          <label htmlFor="email" className="form-label">
-            Email Address
-          </label>
+          <label htmlFor="email" className="form-label">Email Address</label>
           <input
             id="email"
             type="email"
             className="form-input"
-            placeholder="admin@hostel.edu"
+            placeholder="your@email.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
@@ -71,9 +65,7 @@ export default function LoginPage() {
         </div>
 
         <div className="form-group">
-          <label htmlFor="password" className="form-label">
-            Password
-          </label>
+          <label htmlFor="password" className="form-label">Password</label>
           <input
             id="password"
             type="password"
