@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: hostel-attendance-api
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: EMBEDDING_ENCRYPTION_KEY
+        sync: false
+      - key: PORT
+        value: 3000
