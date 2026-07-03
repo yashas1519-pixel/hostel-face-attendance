@@ -36,7 +36,8 @@ export async function fetchWithAuth(
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
 
-  if (res.status === 401) {
+  // 401 = expired/invalid token; 403 = wrong role (e.g. student token in admin panel)
+  if (res.status === 401 || res.status === 403) {
     clearToken();
     if (typeof window !== "undefined") window.location.href = "/login";
     throw new Error("Unauthorized");

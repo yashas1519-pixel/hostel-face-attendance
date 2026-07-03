@@ -98,8 +98,14 @@ export async function login(
   );
   const data = await handleResponse<{
     token: string;
-    user: { name: string; email: string };
+    user: { name: string; email: string; role: string };
   }>(res);
+
+  // Admin panel only — reject student tokens before storing
+  if (data.user.role !== "admin") {
+    throw new ApiError(403, "Access denied: this panel is for admins only");
+  }
+
   setToken(data.token);
   return data;
 }
