@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { fetchWithAuth } from "@/lib/auth";
 import { useToast } from "@/components/Toast";
-import styles from "../enrollments/enrollments.module.css"; // reuse same table styles
 
 interface LeaveRequest {
   id: string;
@@ -103,13 +102,13 @@ export default function LeavePage() {
       </div>
 
       {loading ? (
-        <div className={styles.skeleton} />
+        <div style={{ background: "linear-gradient(90deg,#111 25%,#1a1a1a 50%,#111 75%)", backgroundSize: "200% 100%", borderRadius: 12, height: 60, margin: "12px 0" }} />
       ) : leaves.length === 0 ? (
-        <div className={styles.empty}>No {status} leave requests.</div>
+        <div style={{ textAlign: "center", color: "#444", padding: "40px 0", fontSize: 14 }}>No {status} leave requests.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {leaves.map((l) => (
-            <div key={l.id} className={styles.card} style={{ padding: "18px 20px" }}>
+            <div key={l.id} style={{ background: "#111", border: "1px solid #1f1f1f", borderRadius: 14, padding: "18px 20px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>
