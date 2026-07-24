@@ -4,7 +4,7 @@ import { Auth } from './roles.guard.js';
 import type { JwtPayload } from './jwt.strategy.js';
 import { AuthService } from './auth.service.js';
 import { RegisterDto, LoginDto, RefreshDto } from './auth.dto.js';
-import { Response } from 'express';
+import type { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {

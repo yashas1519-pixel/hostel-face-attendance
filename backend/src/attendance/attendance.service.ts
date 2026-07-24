@@ -35,7 +35,7 @@ export class AttendanceService {
     private readonly enrollmentService: EnrollmentService,
   ) {}
 
-  private async validateStudentEnrolled(studentId: string): Promise<{ faceEmbedding: Buffer }> {
+  private async validateStudentEnrolled(studentId: string): Promise<{ faceEmbedding: number[] }> {
     const [student] = await this.db
       .select({ id: users.id, faceEmbedding: users.faceEmbedding, enrollmentStatus: users.enrollmentStatus })
       .from(users)
@@ -122,7 +122,7 @@ export class AttendanceService {
     return 'present';
   }
 
-  private validateFaceMatch(submitted: number[], stored: Buffer): { score: number; status: 'present' | 'flagged' | 'rejected'; reason?: string } {
+  private validateFaceMatch(submitted: number[], stored: number[]): { score: number; status: 'present' | 'flagged' | 'rejected'; reason?: string } {
     const faceMatchScore = cosineSimilarity(submitted, stored);
     if (faceMatchScore < AttendanceService.FACE_MATCH_FLAG) {
       return { score: faceMatchScore, status: 'rejected', reason: `Face does not match enrolled photo (score: ${faceMatchScore.toFixed(3)})` };
