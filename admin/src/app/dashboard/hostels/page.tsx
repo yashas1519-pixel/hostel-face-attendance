@@ -28,7 +28,7 @@ declare global {
   interface Window {
     L: {
       map(el: HTMLDivElement): LeafletMap;
-      tileLayer(url: string, opts: { attribution: string; maxZoom: number }): { addTo(m: LeafletMap): void };
+      tileLayer(url: string, opts: { attribution: string; maxZoom: number; [key: string]: unknown }): { addTo(m: LeafletMap): void };
       polyline(latlngs: [number, number][], opts: { color: string }): LeafletPolyline;
       marker(latlng: [number, number]): LeafletMarker & { addTo(m: LeafletMap): LeafletMarker };
     };
