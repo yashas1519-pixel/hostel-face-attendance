@@ -116,7 +116,6 @@ export class AttendanceService {
     } else if (currentTime < window.startTime || currentTime > window.endTime) {
       reject(`Outside check-in window (${window.startTime}–${window.endTime})`);
     }
-    }
 
     // ── Step 2: GPS sample spread ≤ 8m (spec §2) ──────────────────────────
     // Client reports spread; server trusts it for the decision (client's own sensor data).
