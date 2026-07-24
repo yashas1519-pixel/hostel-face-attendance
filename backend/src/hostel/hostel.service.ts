@@ -172,12 +172,16 @@ export class HostelService {
   }
 
   async getActiveWindow(hostelId: string) {
+    // ponytail: times are stored in IST (admin enters local time) — compare in IST (UTC+5:30)
     const now = new Date();
-    // HH:MM in server local time
-    const hh = now.getUTCHours().toString().padStart(2, '0');
-    const mm = now.getUTCMinutes().toString().padStart(2, '0');
+    const istOffset = 5 * 60 + 30; // minutes
+    const istMs = now.getTime() + istOffset * 60_000;
+    const ist = new Date(istMs);
+
+    const hh = ist.getUTCHours().toString().padStart(2, '0');
+    const mm = ist.getUTCMinutes().toString().padStart(2, '0');
     const currentTime = `${hh}:${mm}`;
-    const currentDay = now.getUTCDay(); // 0=Sun..6=Sat
+    const currentDay = ist.getUTCDay(); // 0=Sun..6=Sat in IST
 
     const windows = await this.db
       .select()

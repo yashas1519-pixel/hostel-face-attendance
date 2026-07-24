@@ -105,13 +105,17 @@ export class AttendanceService {
     let rejectionReason: string | null = null;
     const reject = (reason: string) => { status = 'rejected'; rejectionReason = reason; };
 
-    // ── Step 1: Time window (server clock, never device clock) ─────────────
-    const now = new Date();
-    const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
-    if (!window.daysOfWeek.includes(now.getUTCDay())) {
+    // ── Step 1: Time window (server clock in IST, never device clock) ────────
+    const nowUtc = new Date();
+    // ponytail: all times stored/entered in IST — offset UTC by +5:30
+    const istMs = nowUtc.getTime() + (5 * 60 + 30) * 60_000;
+    const ist = new Date(istMs);
+    const currentTime = `${String(ist.getUTCHours()).padStart(2, '0')}:${String(ist.getUTCMinutes()).padStart(2, '0')}`;
+    if (!window.daysOfWeek.includes(ist.getUTCDay())) {
       reject('Check-in not available today');
     } else if (currentTime < window.startTime || currentTime > window.endTime) {
       reject(`Outside check-in window (${window.startTime}–${window.endTime})`);
+    }
     }
 
     // ── Step 2: GPS sample spread ≤ 8m (spec §2) ──────────────────────────
