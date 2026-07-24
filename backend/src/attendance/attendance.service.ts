@@ -122,9 +122,8 @@ export class AttendanceService {
     }
 
     // ── Step 3: Averaged point inside building polygon (spec §3) ───────────
-    // deviceLat/Lng from the DTO is the CENTROID of the GPS samples (client averaged).
-    // hostel IS the building — spec §1 note: no separate buildings table in our schema.
-    if (status === 'present') {
+    // Skip for web-source submissions — GPS accuracy from browser is unreliable indoors
+    if (status === 'present' && !dto.webSource) {
       const polygon = JSON.parse(hostel.boundaryPolygon) as GeoJsonPolygon;
       const ring = polygon.coordinates[0]!;
       if (!pointInPolygon([dto.deviceLng, dto.deviceLat], ring)) {
@@ -133,7 +132,8 @@ export class AttendanceService {
     }
 
     // ── Step 4: GPS accuracy ≤ 20m AND (WiFi matches OR accuracy ≤ 10m) ────
-    if (status === 'present') {
+    // Skip for web-source — browser WiFi API not available, GPS accuracy varies
+    if (status === 'present' && !dto.webSource) {
       const accuracy = dto.gpsAccuracyM ?? Infinity;
       if (accuracy > 20) {
         reject(`GPS accuracy too low: ${accuracy.toFixed(1)}m (need ≤ 20m)`);
@@ -194,7 +194,9 @@ export class AttendanceService {
     if (status === 'present' && !dto.livenessPassed) {
       reject('Liveness check failed');
     }
-    if (status === 'present' && (dto.parallaxRatio === undefined || dto.parallaxRatio <= 1.3)) {
+    // Parallax ratio is only available from the native mobile app — skip for web source
+    if (status === 'present' && !dto.webSource &&
+        (dto.parallaxRatio === undefined || dto.parallaxRatio <= 1.3)) {
       reject(`Parallax ratio too low: ${dto.parallaxRatio?.toFixed(2) ?? 'missing'}`);
     }
 

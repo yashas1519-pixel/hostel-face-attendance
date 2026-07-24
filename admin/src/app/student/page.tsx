@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchWithAuth } from "@/lib/auth";
 import { logout } from "@/lib/auth";
@@ -218,6 +219,23 @@ export default function StudentPage() {
       {/* Attendance tab */}
       {tab === "attendance" && (
         <div className={styles.section}>
+          {/* Mark attendance CTA */}
+          {user?.enrollmentStatus === "approved" && (
+            <Link
+              href="/student/mark-attendance"
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                background: "linear-gradient(135deg,#FF6B35,#e8502a)",
+                color: "#fff", borderRadius: 14, padding: "16px 28px",
+                fontWeight: 700, fontSize: 16, textDecoration: "none",
+                marginBottom: 24, boxShadow: "0 4px 20px rgba(255,107,53,0.35)",
+                transition: "transform 0.2s",
+              }}
+            >
+              <span style={{ fontSize: 22 }}>👁</span>
+              Mark Attendance with Face
+            </Link>
+          )}
           {attendance.length === 0 ? (
             <div className={styles.empty}>No attendance records yet.</div>
           ) : (

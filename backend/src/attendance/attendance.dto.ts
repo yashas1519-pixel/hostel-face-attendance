@@ -68,4 +68,9 @@ export class MarkAttendanceDto {
   @IsOptional()
   @IsNumber()
   impliedSpeed?: number;
+
+  /** True when submitted from web browser — skips GPS polygon and parallax checks */
+  @IsOptional()
+  @IsBoolean()
+  webSource?: boolean;
 }
