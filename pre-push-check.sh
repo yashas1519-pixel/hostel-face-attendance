@@ -24,10 +24,10 @@ if npm run build --silent 2>&1 | grep -E "error TS|SyntaxError|Cannot find" | gr
 fi
 pass "Backend build OK"
 
-# ── 2. Frontend TypeScript check ──────────────────────────────────────────────
+# ── 2. Frontend TypeScript check (matches Vercel exactly — no --skipLibCheck) ──
 info "Frontend: tsc --noEmit"
 cd "$FRONTEND"
-TS_ERRORS=$(node node_modules/typescript/bin/tsc --noEmit --skipLibCheck 2>&1 | grep "error TS" | grep -v "next.config" || true)
+TS_ERRORS=$(node node_modules/typescript/bin/tsc --noEmit 2>&1 | grep "error TS" | grep -v "node_modules\|next.config" || true)
 if [ -n "$TS_ERRORS" ]; then
   echo "$TS_ERRORS"
   fail "Frontend TypeScript errors found — fix above before pushing."
