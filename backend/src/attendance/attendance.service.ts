@@ -159,6 +159,14 @@ export class AttendanceService {
       reject('Mock location detected');
     }
 
+    // Server-side sanity: coordinates outside India = suspicious
+    const inIndia = dto.deviceLat >= 6.5 && dto.deviceLat <= 37.6 &&
+                    dto.deviceLng >= 68.1 && dto.deviceLng <= 97.4;
+    if (status === 'present' && (!inIndia || (dto.deviceLat === 0 && dto.deviceLng === 0))) {
+      status = 'flagged';
+      rejectionReason = 'Device coordinates outside expected region — possible mock location';
+    }
+
     // ── Step 6: Velocity/teleport check (spec §5) ──────────────────────────
     // Server computes implied speed from DB — client value (dto.impliedSpeed) is for audit only.
     let impliedSpeedMps: number | null = null;

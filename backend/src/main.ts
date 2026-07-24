@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './all-exceptions.filter.js';
 
@@ -9,6 +10,9 @@ async function bootstrap() {
 
   // Security headers — CSP, X-Frame-Options, HSTS, etc.
   app.use(helmet());
+  app.use(cookieParser());
+
+  app.setGlobalPrefix('api/v1');
 
   const allowedOrigins = [
     'https://admin-theta-beryl-35.vercel.app',

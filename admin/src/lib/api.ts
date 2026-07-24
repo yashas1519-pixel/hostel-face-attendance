@@ -89,9 +89,10 @@ export async function login(
   password: string
 ): Promise<{ accessToken: string; refreshToken: string; user: { name: string; email: string; role: string } }> {
   const res = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/auth/login`,
+    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/api/v1/auth/login`,
     {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     }

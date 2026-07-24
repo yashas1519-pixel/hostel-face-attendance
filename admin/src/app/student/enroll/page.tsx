@@ -56,7 +56,7 @@ export default function EnrollPage() {
   }, []);
 
   async function init() {
-    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
+    const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000'}/api/v1`;
     try {
       const consentRes = await fetch(`${API}/consent/status`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` },

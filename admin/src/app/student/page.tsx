@@ -38,7 +38,7 @@ interface LeaveRequest {
 
 type Tab = "attendance" | "leave";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+const API = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"}/api/v1`;
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetchWithAuth(path, opts);

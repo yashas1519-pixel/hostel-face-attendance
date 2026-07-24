@@ -35,7 +35,9 @@ export class EnrollmentService {
         faceEmbedding: encrypted,
         enrollmentStatus: 'pending',
         embeddingEnrolledAt: new Date(),
-        ...(dto.facePhoto ? { facePhoto: dto.facePhoto } : {}),
+        // ponytail: store only a compressed thumbnail (not full image) for admin review
+        // Full raw images are never persisted — only the encrypted embedding is used for matching
+        ...(dto.facePhoto ? { facePhoto: dto.facePhoto.slice(0, 50_000) } : {}), // cap at ~50KB
       })
       .where(eq(users.id, studentId));
 

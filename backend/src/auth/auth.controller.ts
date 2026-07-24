@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Body, Req } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from './roles.guard.js';
 import type { JwtPayload } from './jwt.strategy.js';
 import { AuthService } from './auth.service.js';
 import { RegisterDto, LoginDto, RefreshDto } from './auth.dto.js';
+import { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -12,27 +13,53 @@ export class AuthController {
   // 5 attempts per minute — brute-force protection
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto);
+  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.register(dto);
+    res.cookie('access_token', result.accessToken, {
+      httpOnly: true,
+      secure: process.env['NODE_ENV'] === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      path: '/',
+    });
+    return result;
   }
 
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.login(dto);
+    res.cookie('access_token', result.accessToken, {
+      httpOnly: true,
+      secure: process.env['NODE_ENV'] === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      path: '/',
+    });
+    return result;
   }
 
   // Separate throttle for refresh — allow more frequent calls
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @Post('refresh')
-  refresh(@Body() dto: RefreshDto) {
-    return this.auth.refresh(dto.refreshToken);
+  async refresh(@Body() dto: RefreshDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.refresh(dto.refreshToken);
+    res.cookie('access_token', result.accessToken, {
+      httpOnly: true,
+      secure: process.env['NODE_ENV'] === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      path: '/',
+    });
+    return result;
   }
 
   @Post('logout')
   @Auth()
-  logout(@Body() dto: RefreshDto) {
-    return this.auth.logout(dto.refreshToken);
+  async logout(@Body() dto: RefreshDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.logout(dto.refreshToken);
+    res.clearCookie('access_token', { path: '/' });
+    return result;
   }
 
   @Get('me')

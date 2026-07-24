@@ -10,7 +10,7 @@ export default function ConsentPage() {
   const [check2, setCheck2] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
+  const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000'}/api/v1`;
 
   useEffect(() => {
     // Check if already consented
