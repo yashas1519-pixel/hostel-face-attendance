@@ -90,9 +90,28 @@ export default function MarkAttendancePage() {
 
   // ── Boot ──────────────────────────────────────────────────────────────────
   async function boot() {
+    setPhaseSync("loading");
     try {
       setMsg("Checking hostel assignment…");
-      const meRes = await fetchWithAuth("/auth/me");
+
+      // 20-second timeout — Render free tier can take 30s+ to cold-start
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20_000);
+
+      let meRes: Response;
+      try {
+        meRes = await fetchWithAuth("/auth/me", { signal: ctrl.signal });
+        clearTimeout(timer);
+      } catch (fetchErr) {
+        clearTimeout(timer);
+        const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
+        setPhaseSync("error");
+        setMsg(isTimeout
+          ? "Server is waking up (free tier). Tap Retry in a few seconds."
+          : (fetchErr instanceof Error ? fetchErr.message : "Network error — check your connection."));
+        return;
+      }
+
       if (!meRes.ok) { setPhaseSync("error"); setMsg("Session expired — log in again."); return; }
       const me = await meRes.json() as { hostelId?: string | null; enrollmentStatus: string };
       if (me.enrollmentStatus !== "approved") { setPhaseSync("error"); setMsg("Face enrollment must be approved first."); return; }
@@ -341,7 +360,7 @@ export default function MarkAttendancePage() {
           {phase === "no-hostel" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>🏠</div><p style={{ color: "#f87171", fontWeight: 600 }}>No hostel assigned</p><p style={{ color: "#666", fontSize: 13 }}>Ask admin to assign you to a hostel.</p></>)}
           {phase === "no-window" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>⏰</div><p style={{ color: "#fbbf24", fontWeight: 600 }}>No active check-in window</p><p style={{ color: "#666", fontSize: 13 }}>{`It's ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. Ask admin to create a window.`}</p></>)}
           {(phase === "loading" || phase === "submitting") && (<><div style={{ width: 40, height: 40, border: "3px solid #333", borderTopColor: "#FF6B35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} /><p style={{ color: "#888", fontSize: 14 }}>{msg}</p></>)}
-          {phase === "error" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div><p style={{ color: "#f87171", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>{msg}</p><button onClick={() => router.push("/student")} style={{ padding: "10px 24px", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#fff", cursor: "pointer" }}>Back</button></>)}
+          {phase === "error" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div><p style={{ color: "#f87171", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>{msg}</p><div style={{ display: "flex", gap: 10, justifyContent: "center" }}><button onClick={() => void boot()} style={{ padding: "10px 24px", background: "#FF6B35", border: "none", borderRadius: 8, color: "#fff", fontWeight: 700, cursor: "pointer" }}>Retry</button><button onClick={() => router.push("/student")} style={{ padding: "10px 24px", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#fff", cursor: "pointer" }}>Back</button></div></>)}
           {phase === "warden-required" && (
             <div style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 18, padding: 28 }}>
               <div style={{ fontSize: 56, marginBottom: 16 }}>🔐</div>
