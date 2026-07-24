@@ -81,6 +81,20 @@ async function collectGps(): Promise<GpsData> {
   return { lat, lng, accuracy: last.coords.accuracy, spread };
 }
 
+// Ray-casting point-in-polygon (same algorithm as backend geo.ts)
+function pointInPolygon(point: [number, number], ring: [number, number][]): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function MarkAttendancePage() {
   const router = useRouter();
@@ -159,15 +173,43 @@ export default function MarkAttendancePage() {
       setPhaseSync("location-check");
       setMsg("Getting your location…");
       try {
+        // Fetch hostel boundary polygon
+        const hostelRes = await fetchWithAuth(`/hostel/${hId}`);
+        let boundaryRing: [number, number][] | null = null;
+        if (hostelRes.ok) {
+          const hostelData = await hostelRes.json() as { boundaryPolygon?: string | null };
+          if (hostelData.boundaryPolygon) {
+            try {
+              const geo = JSON.parse(hostelData.boundaryPolygon) as { coordinates: [number, number][][] };
+              boundaryRing = geo.coordinates[0] ?? null;
+            } catch { boundaryRing = null; }
+          }
+        }
+
+        // Get GPS
+        setMsg("Locating you…");
         const gps = await collectGps();
         gpsRef.current = gps;
+
+        // Check if inside building polygon (skip if no polygon configured)
+        if (boundaryRing && boundaryRing.length >= 3) {
+          const inside = pointInPolygon([gps.lng, gps.lat], boundaryRing);
+          if (!inside) {
+            setPhaseSync("location-fail");
+            setMsg("You are not inside the hostel building. Please go to your hostel and try again.");
+            return;
+          }
+        }
+        // No polygon configured — skip geofence (admin hasn't drawn boundary yet)
+
         setPhaseSync("location-ok");
-        // Brief 1.5s "Location Verified" screen, then start camera
         await new Promise((r) => setTimeout(r, 1500));
         await startCamera(hId, checkedWin);
-      } catch {
+      } catch (locErr) {
         setPhaseSync("location-fail");
-        setMsg("Location access denied or unavailable.");
+        setMsg(locErr instanceof Error && locErr.code === 1
+          ? "Location permission denied. Please allow location access."
+          : "Could not get your location. Try again.");
       }
     } catch (e) {
       setPhaseSync("error");
@@ -278,7 +320,7 @@ export default function MarkAttendancePage() {
     // ── STEP 3: Liveness challenge ──────────────────────────────────────────
     const dir = randomDir();
     setChallenge(dir);
-    setLivenessTimer(5);
+    setLivenessTimer(10);
     setPhaseSync("liveness");
     startLivenessLoop(faceapi, dir, hId, win, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,7 +330,10 @@ export default function MarkAttendancePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function startLivenessLoop(faceapi: any, dir: Direction, hId: string, win: ActiveWindow, strikes: number) {
     let lastTs = 0;
-    let timeLeft = 5;
+    let timeLeft = 10;
+    setLivenessTimer(10);
+    // Ensure video is still playing after a retry
+    void videoRef.current?.play().catch(() => {});
     const timerInterval = setInterval(() => {
       timeLeft--;
       setLivenessTimer(timeLeft);
@@ -337,9 +382,14 @@ export default function MarkAttendancePage() {
     } else {
       const newDir = randomDir();
       setChallenge(newDir);
-      setLivenessTimer(5);
+      setLivenessTimer(10);
       setPhaseSync("liveness-fail");
       setTimeout(() => {
+        // Re-attach stream if video went blank during the pause
+        if (videoRef.current && streamRef.current) {
+          if (!videoRef.current.srcObject) videoRef.current.srcObject = streamRef.current;
+          void videoRef.current.play().catch(() => {});
+        }
         setPhaseSync("liveness");
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         startLivenessLoop(faceapi as any, newDir, hId, win, newStrikes);
@@ -362,7 +412,7 @@ export default function MarkAttendancePage() {
           livenessPassed: true, livenessAction: "head-movement",
           deviceLat: gps.lat, deviceLng: gps.lng,
           gpsAccuracyM: gps.accuracy, gpsSampleSpread: gps.spread,
-          mockLocationFlag: false, deviceId: getDeviceId(), webSource: true,
+          mockLocationFlag: false, deviceId: getDeviceId(), webSource: false,
         }),
       });
       if (!r.ok) { const b = await r.json().catch(() => ({})) as { message?: string }; throw new Error(b.message ?? "Submission failed"); }
