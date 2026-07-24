@@ -19,7 +19,7 @@ const bytea = customType<{ data: Buffer }>({
   },
 });
 
-export const roleEnum = pgEnum('role', ['student', 'admin']);
+export const roleEnum = pgEnum('role', ['student', 'admin', 'warden']);
 export const enrollmentStatusEnum = pgEnum('enrollment_status', [
   'none',
   'pending',
@@ -180,4 +180,25 @@ export const leaveRequests = pgTable('leave_requests', {
     .notNull()
     .defaultNow()
     .$onUpdateFn(() => new Date()),
+});
+
+// ── Hostel Wardens ────────────────────────────────────────────────────
+export const hostelWardens = pgTable('hostel_wardens', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  hostelId: uuid('hostel_id').notNull().references(() => hostels.id, { onDelete: 'cascade' }),
+  wardenId: uuid('warden_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
+  assignedBy: uuid('assigned_by').notNull().references(() => users.id),
+});
+
+// ── Liveness Failures ─────────────────────────────────────────────────
+export const livenessFailures = pgTable('liveness_failures', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  studentId: uuid('student_id').notNull().references(() => users.id),
+  hostelId: uuid('hostel_id').notNull().references(() => hostels.id),
+  failedAt: timestamp('failed_at', { withTimezone: true }).notNull().defaultNow(),
+  attemptCount: integer('attempt_count').notNull().default(3),
+  resolved: boolean('resolved').notNull().default(false),
+  resolvedBy: uuid('resolved_by').references(() => users.id),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 });

@@ -55,4 +55,13 @@ export class AttendanceController {
       Math.min(limit, 100),
     );
   }
+
+  @Post('attendance/liveness-failure')
+  @Auth('student')
+  livenessFailure(
+    @Body() body: { hostelId: string },
+    @Req() req: { user: JwtPayload },
+  ) {
+    return this.attendance.recordLivenessFailure(req.user.sub, body.hostelId);
+  }
 }

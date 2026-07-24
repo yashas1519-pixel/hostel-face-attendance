@@ -13,6 +13,7 @@ import {
   hostels,
   studentHostelAssignments,
   users,
+  livenessFailures,
 } from '../db/schema.js';
 import { EnrollmentService } from '../enrollment/enrollment.service.js';
 import { pointInPolygon, cosineSimilarity, haversineMeters } from '../lib/geo.js';
@@ -330,5 +331,25 @@ export class AttendanceService {
       : await countQuery;
 
     return { data: rows, total: countRow?.count ?? 0, page, limit };
+  }
+
+  async recordLivenessFailure(studentId: string, hostelId: string) {
+    // Verify student is assigned to this hostel
+    const [assignment] = await this.db
+      .select({ id: studentHostelAssignments.id })
+      .from(studentHostelAssignments)
+      .where(and(
+        eq(studentHostelAssignments.studentId, studentId),
+        eq(studentHostelAssignments.hostelId, hostelId),
+      ))
+      .limit(1);
+    if (!assignment) throw new BadRequestException('Student not assigned to this hostel');
+
+    const [record] = await this.db
+      .insert(livenessFailures)
+      .values({ studentId, hostelId, attemptCount: 3 })
+      .returning();
+    this.logger.warn(`Liveness failure logged: student=${studentId}`);
+    return record;
   }
 }

@@ -25,8 +25,9 @@ export default function LoginPage() {
     try {
       const { user } = await login(email, password);
       toast(`Welcome, ${user.name}!`);
-      // Route by role — single login, two dashboards
-      router.push(user.role === "admin" ? "/dashboard" : "/student");
+      // Route by role — single login, three dashboards
+      const dest = user.role === "admin" ? "/dashboard" : user.role === "warden" ? "/warden" : "/student";
+      router.push(dest);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : "Unable to connect to server";
       setError(msg);

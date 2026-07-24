@@ -4,9 +4,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchWithAuth } from "@/lib/auth";
 
-type Phase = "loading" | "no-hostel" | "no-window" | "scanning" | "locked" | "capturing" | "submitting" | "done" | "error";
+// ── Types ────────────────────────────────────────────────────────────────────
+type Phase =
+  | "loading" | "no-hostel" | "no-window" | "error"
+  | "scanning"    // waiting for face to enter oval
+  | "locked"      // face detected — countdown to capture
+  | "capturing"   // 5-frame embedding capture
+  | "liveness"    // head-direction challenge
+  | "liveness-fail" // wrong direction (retry)
+  | "submitting"
+  | "done"
+  | "warden-required"; // 3 liveness failures
 
+type Direction = "left" | "right" | "up" | "down";
 interface ActiveWindow { id: string; name: string; startTime: string; endTime: string; }
+
+const DIRS: Direction[] = ["left", "right", "up", "down"];
+const DIR_LABELS: Record<Direction, string> = { left: "LEFT ←", right: "RIGHT →", up: "UP ↑", down: "DOWN ↓" };
+const DIR_EMOJI: Record<Direction, string> = { left: "👈", right: "👉", up: "☝️", down: "👇" };
+
+function randomDir(): Direction { return DIRS[Math.floor(Math.random() * DIRS.length)]; }
 
 function getDeviceId(): string {
   let id = localStorage.getItem("device_id");
@@ -14,56 +31,76 @@ function getDeviceId(): string {
   return id;
 }
 
+// ── Head pose from face-api landmarks ────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function detectHeadDirection(landmarks: any): Direction | "center" {
+  const pts = landmarks.positions as { x: number; y: number }[];
+  const noseTip   = pts[30];
+  const leftEye   = pts[36];  // outer left eye (camera frame)
+  const rightEye  = pts[45];  // outer right eye (camera frame)
+  const chin      = pts[8];
+  const noseBridge = pts[27];
+
+  const eyeCenterX = (leftEye.x + rightEye.x) / 2;
+  const eyeCenterY = (leftEye.y + rightEye.y) / 2;
+  const faceWidth  = Math.abs(rightEye.x - leftEye.x);
+  const faceHeight = Math.abs(chin.y - noseBridge.y);
+
+  const yaw   = (noseTip.x - eyeCenterX) / faceWidth;   // + = person turned left
+  const pitch = (noseTip.y - eyeCenterY) / faceHeight;  // + = looking down
+
+  if (yaw   >  0.22) return "left";
+  if (yaw   < -0.22) return "right";
+  if (pitch < -0.05) return "up";
+  if (pitch >  0.18) return "down";
+  return "center";
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function MarkAttendancePage() {
   const router = useRouter();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number>(0);
-  const phaseRef = useRef<Phase>("loading");
+  const videoRef   = useRef<HTMLVideoElement>(null);
+  const streamRef  = useRef<MediaStream | null>(null);
+  const rafRef     = useRef<number>(0);
+  const phaseRef   = useRef<Phase>("loading");
+  const fapiRef    = useRef<unknown>(null);
+  const embeddingRef = useRef<Float32Array | null>(null); // stored after capture, used after liveness
 
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [msg, setMsg] = useState("Initialising…");
-  const [faceIn, setFaceIn] = useState(false);
-  const [countdown, setCountdown] = useState(3);
+  const [phase,        setPhase]        = useState<Phase>("loading");
+  const [msg,          setMsg]          = useState("Initialising…");
+  const [faceIn,       setFaceIn]       = useState(false);
+  const [countdown,    setCountdown]    = useState(3);
   const [captureCount, setCaptureCount] = useState(0);
-  const [flash, setFlash] = useState(false);
-  const [scanDeg, setScanDeg] = useState(0);
-  const [result, setResult] = useState<{ status: string; rejectionReason?: string } | null>(null);
-  const [hostelId, setHostelId] = useState<string | null>(null);
-  const [window_, setWindow_] = useState<ActiveWindow | null>(null);
+  const [flash,        setFlash]        = useState(false);
+  const [scanDeg,      setScanDeg]      = useState(0);
+  const [challenge,    setChallenge]    = useState<Direction>("left");
+  const [livenessTimer, setLivenessTimer] = useState(5);
+  const [strikeCount,  setStrikeCount]  = useState(0);
+  const [result,       setResult]       = useState<{ status: string; rejectionReason?: string } | null>(null);
+  const [hostelId,     setHostelId]     = useState<string | null>(null);
+  const [window_,      setWindow_]      = useState<ActiveWindow | null>(null);
 
   const setPhaseSync = useCallback((p: Phase) => { phaseRef.current = p; setPhase(p); }, []);
 
-  // ── Boot: check hostel assignment + active window ──────────────────────────
   useEffect(() => {
     void boot();
-    return () => {
-      cancelAnimationFrame(rafRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
+    return () => { cancelAnimationFrame(rafRef.current); streamRef.current?.getTracks().forEach((t) => t.stop()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Boot ──────────────────────────────────────────────────────────────────
   async function boot() {
     try {
-      setMsg("Checking your hostel assignment…");
+      setMsg("Checking hostel assignment…");
       const meRes = await fetchWithAuth("/auth/me");
-      if (!meRes.ok) {
-        setPhaseSync("error");
-        setMsg("Session expired — please log in again.");
-        return;
-      }
+      if (!meRes.ok) { setPhaseSync("error"); setMsg("Session expired — log in again."); return; }
       const me = await meRes.json() as { hostelId?: string | null; enrollmentStatus: string };
-
-      if (me.enrollmentStatus !== "approved") {
-        setPhaseSync("error"); setMsg("Your face enrollment must be approved first."); return;
-      }
+      if (me.enrollmentStatus !== "approved") { setPhaseSync("error"); setMsg("Face enrollment must be approved first."); return; }
       if (!me.hostelId) { setPhaseSync("no-hostel"); return; }
       setHostelId(me.hostelId);
 
       setMsg("Checking check-in windows…");
       const winRes = await fetchWithAuth(`/hostel/${me.hostelId}/active-window`);
-      // active-window returns the window object or null/empty when none active
       let win: ActiveWindow | null = null;
       if (winRes.ok) {
         const text = await winRes.text();
@@ -85,27 +122,29 @@ export default function MarkAttendancePage() {
       await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
       await faceapi.nets.faceLandmark68TinyNet.loadFromUri("/models");
       await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+      fapiRef.current = faceapi;
 
       setPhaseSync("scanning");
       setMsg("Centre your face in the oval");
-      startLoop(faceapi, me.hostelId, win);
+      startScanLoop(faceapi, me.hostelId, win);
     } catch (e) {
       setPhaseSync("error");
       setMsg(e instanceof Error ? e.message : "Setup failed");
     }
   }
 
+  // ── Scan loop (face detection only — no descriptor) ──────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function startLoop(faceapi: any, hId: string, win: ActiveWindow) {
+  function startScanLoop(faceapi: any, hId: string, win: ActiveWindow) {
     let lastTs = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let lastResults: any[] = [];
     let angle = 0;
-    let lockedSince = 0;
+    let locked = false;
 
     const loop = async (ts: number) => {
       const p = phaseRef.current;
-      if (p === "capturing" || p === "submitting" || p === "done" || p === "error") return;
+      if (p === "capturing" || p === "liveness" || p === "liveness-fail" || p === "submitting" || p === "done" || p === "error" || p === "warden-required") return;
 
       angle = (angle + 3) % 360;
       setScanDeg(angle);
@@ -113,9 +152,8 @@ export default function MarkAttendancePage() {
       const video = videoRef.current;
       if (video && video.readyState >= 2 && ts - lastTs > 300) {
         lastTs = ts;
-        try {
-          lastResults = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }));
-        } catch { lastResults = []; }
+        try { lastResults = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 })); }
+        catch { lastResults = []; }
       }
 
       let inOval = false;
@@ -128,15 +166,15 @@ export default function MarkAttendancePage() {
       }
       setFaceIn(inOval);
 
-      if (inOval && p === "scanning") {
-        if (!lockedSince) {
-          lockedSince = ts;
-          setPhaseSync("locked");
-          setCountdown(3);
-          scheduleCapture(faceapi, hId, win);
-        }
+      if (inOval && p === "scanning" && !locked) {
+        locked = true;
+        setPhaseSync("locked");
+        setCountdown(3);
+        let c = 3;
+        const tick = () => { c--; setCountdown(c); if (c <= 0) void doCapture(faceapi, hId, win); else setTimeout(tick, 1000); };
+        setTimeout(tick, 1000);
       } else if (!inOval && p === "locked") {
-        lockedSince = 0;
+        locked = false;
         setPhaseSync("scanning");
         setCountdown(3);
       }
@@ -146,18 +184,7 @@ export default function MarkAttendancePage() {
     rafRef.current = requestAnimationFrame(loop);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function scheduleCapture(faceapi: any, hId: string, win: ActiveWindow) {
-    let count = 3;
-    const tick = () => {
-      count--;
-      setCountdown(count);
-      if (count <= 0) void doCapture(faceapi, hId, win);
-      else setTimeout(tick, 1000);
-    };
-    setTimeout(tick, 1000);
-  }
-
+  // ── Capture 5-frame embedding ─────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doCapture = useCallback(async (faceapi: any, hId: string, win: ActiveWindow) => {
     cancelAnimationFrame(rafRef.current);
@@ -167,26 +194,104 @@ export default function MarkAttendancePage() {
 
     const descriptors: Float32Array[] = [];
     for (let i = 0; i < 5; i++) {
-      setFlash(true);
-      await new Promise((r) => setTimeout(r, 80));
-      setFlash(false);
-      await new Promise((r) => setTimeout(r, 420));
+      setFlash(true); await new Promise((r) => setTimeout(r, 80));
+      setFlash(false); await new Promise((r) => setTimeout(r, 420));
       setCaptureCount(i + 1);
-
       const res = await faceapi
         .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }))
-        .withFaceLandmarks(true)
-        .withFaceDescriptor();
-      if (!res) { setPhaseSync("error"); setMsg("Face moved — try again."); return; }
+        .withFaceLandmarks(true).withFaceDescriptor();
+      if (!res) { setPhaseSync("error"); setMsg("Face moved during capture — try again."); return; }
       descriptors.push(res.descriptor);
     }
-
     const avg = new Float32Array(128);
     for (const d of descriptors) d.forEach((v: number, i: number) => { avg[i] += v; });
     avg.forEach((_, i) => { avg[i] /= descriptors.length; });
+    embeddingRef.current = avg;
 
+    // ── Start liveness challenge ────────────────────────────────────────────
+    const dir = randomDir();
+    setChallenge(dir);
+    setLivenessTimer(5);
+    setPhaseSync("liveness");
+    startLivenessLoop(faceapi, dir, hId, win, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Liveness loop — detect head movement ─────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function startLivenessLoop(faceapi: any, dir: Direction, hId: string, win: ActiveWindow, strikes: number) {
+    let lastTs = 0;
+    let timeLeft = 5;
+    let timerInterval: ReturnType<typeof setInterval>;
+
+    // Countdown timer
+    timerInterval = setInterval(() => {
+      timeLeft--;
+      setLivenessTimer(timeLeft);
+      if (timeLeft <= 0) {
+        clearInterval(timerInterval);
+        cancelAnimationFrame(rafRef.current);
+        handleLivenessFail(faceapi, hId, win, strikes);
+      }
+    }, 1000);
+
+    const loop = async (ts: number) => {
+      const p = phaseRef.current;
+      if (p !== "liveness") { clearInterval(timerInterval); return; }
+
+      const video = videoRef.current;
+      if (video && video.readyState >= 2 && ts - lastTs > 150) {
+        lastTs = ts;
+        try {
+          const res = await faceapi
+            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.3 }))
+            .withFaceLandmarks(true);
+          if (res) {
+            const detected = detectHeadDirection(res.landmarks);
+            if (detected === dir) {
+              clearInterval(timerInterval);
+              cancelAnimationFrame(rafRef.current);
+              void submit(hId, win);
+              return;
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  }
+
+  function handleLivenessFail(faceapi: unknown, hId: string, win: ActiveWindow, strikes: number) {
+    const newStrikes = strikes + 1;
+    setStrikeCount(newStrikes);
+
+    if (newStrikes >= 3) {
+      setPhaseSync("warden-required");
+      // Log to backend
+      void fetchWithAuth("/attendance/liveness-failure", {
+        method: "POST",
+        body: JSON.stringify({ hostelId: hId }),
+      });
+    } else {
+      // Give another random direction
+      const newDir = randomDir();
+      setChallenge(newDir);
+      setLivenessTimer(5);
+      setPhaseSync("liveness-fail");
+      setTimeout(() => {
+        setPhaseSync("liveness");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        startLivenessLoop(faceapi as any, newDir, hId, win, newStrikes);
+      }, 2000);
+    }
+  }
+
+  // ── Submit to backend ─────────────────────────────────────────────────────
+  const submit = useCallback(async (hId: string, win: ActiveWindow) => {
     setPhaseSync("submitting");
-    setMsg("Getting your location…");
+    const avg = embeddingRef.current;
+    if (!avg) { setPhaseSync("error"); setMsg("No face data captured."); return; }
 
     let lat = 0, lng = 0, accuracy = 999;
     try {
@@ -194,29 +299,21 @@ export default function MarkAttendancePage() {
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 })
       );
       lat = pos.coords.latitude; lng = pos.coords.longitude; accuracy = pos.coords.accuracy;
-    } catch { /* use 0,0 — webSource skips polygon check */ }
+    } catch { /* webSource skips polygon check anyway */ }
 
-    setMsg("Verifying your face…");
     try {
-      const body = {
-        hostelId: hId,
-        checkInWindowId: win.id,
-        embedding: Array.from(avg),
-        livenessPassed: true,
-        livenessAction: "web",
-        deviceLat: lat,
-        deviceLng: lng,
-        gpsAccuracyM: accuracy,
-        gpsSampleSpread: 0,
-        mockLocationFlag: false,
-        deviceId: getDeviceId(),
-        webSource: true,
-      };
-      const r = await fetchWithAuth("/attendance/mark", { method: "POST", body: JSON.stringify(body) });
-      if (!r.ok) {
-        const b = await r.json().catch(() => ({})) as { message?: string };
-        throw new Error(b.message ?? "Submission failed");
-      }
+      const r = await fetchWithAuth("/attendance/mark", {
+        method: "POST",
+        body: JSON.stringify({
+          hostelId: hId, checkInWindowId: win.id,
+          embedding: Array.from(avg),
+          livenessPassed: true, livenessAction: "head-movement",
+          deviceLat: lat, deviceLng: lng, gpsAccuracyM: accuracy,
+          gpsSampleSpread: 0, mockLocationFlag: false,
+          deviceId: getDeviceId(), webSource: true,
+        }),
+      });
+      if (!r.ok) { const b = await r.json().catch(() => ({})) as { message?: string }; throw new Error(b.message ?? "Submission failed"); }
       const rec = await r.json() as { status: string; rejectionReason?: string };
       setResult(rec);
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -228,108 +325,90 @@ export default function MarkAttendancePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── UI ──────────────────────────────────────────────────────────────────────
-  const scanning = phase === "scanning" || phase === "locked" || phase === "capturing";
+  // ── Render ────────────────────────────────────────────────────────────────
+  const scanning = ["scanning", "locked", "capturing", "liveness", "liveness-fail"].includes(phase);
 
   return (
-    <div style={{
-      minHeight: "100vh", background: "#000", display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", fontFamily: "Inter, sans-serif",
-      color: "#fff", padding: 24,
-    }}>
+    <div style={{ minHeight: "100vh", background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "Inter, sans-serif", color: "#fff", padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 6px" }}>Mark Attendance</h1>
-      <p style={{ color: "#666", fontSize: 13, margin: "0 0 28px" }}>
+      <p style={{ color: "#555", fontSize: 13, margin: "0 0 28px" }}>
         {window_ ? `Window: ${window_.name} (${window_.startTime}–${window_.endTime})` : ""}
       </p>
 
-      {/* Loading / Error / Info states */}
+      {/* Info / error states */}
       {!scanning && phase !== "done" && (
         <div style={{ textAlign: "center", maxWidth: 320 }}>
-          {phase === "no-hostel" && (
-            <>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>🏠</div>
-              <p style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>No hostel assigned</p>
-              <p style={{ color: "#666", fontSize: 13 }}>
-                Ask the admin to assign you to a hostel from the Students page.
+          {phase === "no-hostel" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>🏠</div><p style={{ color: "#f87171", fontWeight: 600 }}>No hostel assigned</p><p style={{ color: "#666", fontSize: 13 }}>Ask admin to assign you to a hostel.</p></>)}
+          {phase === "no-window" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>⏰</div><p style={{ color: "#fbbf24", fontWeight: 600 }}>No active check-in window</p><p style={{ color: "#666", fontSize: 13 }}>{`It's ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. Ask admin to create a window.`}</p></>)}
+          {(phase === "loading" || phase === "submitting") && (<><div style={{ width: 40, height: 40, border: "3px solid #333", borderTopColor: "#FF6B35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} /><p style={{ color: "#888", fontSize: 14 }}>{msg}</p></>)}
+          {phase === "error" && (<><div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div><p style={{ color: "#f87171", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>{msg}</p><button onClick={() => router.push("/student")} style={{ padding: "10px 24px", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#fff", cursor: "pointer" }}>Back</button></>)}
+          {phase === "warden-required" && (
+            <div style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 18, padding: 28 }}>
+              <div style={{ fontSize: 56, marginBottom: 16 }}>🔐</div>
+              <p style={{ color: "#f87171", fontWeight: 700, fontSize: 18, marginBottom: 8 }}>3 Liveness Failures</p>
+              <p style={{ color: "#888", fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+                Please visit your <strong style={{ color: "#fff" }}>hostel warden</strong> to get your attendance marked manually.<br /><br />
+                This incident has been reported.
               </p>
-            </>
-          )}
-          {phase === "no-window" && (
-            <>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>⏰</div>
-              <p style={{ color: "#fbbf24", fontWeight: 600, marginBottom: 8 }}>No active check-in window</p>
-              <p style={{ color: "#666", fontSize: 13 }}>
-                {`It's ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. `}
-                Ask the admin to create a check-in window covering this time.
-              </p>
-            </>
-          )}
-          {(phase === "loading" || phase === "submitting") && (
-            <>
-              <div style={{ width: 40, height: 40, border: "3px solid #333", borderTopColor: "#FF6B35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
-              <p style={{ color: "#888", fontSize: 14 }}>{msg}</p>
-            </>
-          )}
-          {phase === "error" && (
-            <>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
-              <p style={{ color: "#f87171", fontWeight: 600, marginBottom: 16, fontSize: 14 }}>{msg}</p>
-              <button onClick={() => router.push("/student")} style={{ padding: "10px 24px", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#fff", cursor: "pointer" }}>
-                Back to Dashboard
+              <button onClick={() => router.push("/student")} style={{ padding: "12px 28px", background: "#FF6B35", border: "none", borderRadius: 10, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+                Go to Dashboard
               </button>
-            </>
+            </div>
           )}
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
 
-      {/* Face scanner */}
+      {/* Face scanner oval */}
       {scanning && (
-        <div style={{ position: "relative", width: "min(360px,90vw)", aspectRatio: "1" }}>
-          {/* Spinning border */}
-          <div style={{
-            position: "absolute", inset: -4, borderRadius: "50%",
-            background: `conic-gradient(from ${scanDeg}deg, #FF6B35, #ff9a35, transparent 60%)`,
-            opacity: faceIn ? 1 : 0.4, transition: "opacity 0.4s",
-          }} />
-          {/* Video */}
+        <div style={{ position: "relative", width: "min(340px,88vw)", aspectRatio: "1" }}>
+          <div style={{ position: "absolute", inset: -4, borderRadius: "50%", background: `conic-gradient(from ${scanDeg}deg, #FF6B35, #ff9a35, transparent 60%)`, opacity: faceIn ? 1 : 0.4, transition: "opacity 0.4s" }} />
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden", background: "#111" }}>
             <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
           </div>
-          {/* Oval SVG overlay */}
           <svg viewBox="0 0 400 400" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-            <defs>
-              <mask id="att-mask">
-                <rect width="400" height="400" fill="white" />
-                <ellipse cx="200" cy="185" rx="125" ry="150" fill="black" />
-              </mask>
-            </defs>
-            <rect width="400" height="400" fill="rgba(0,0,0,0.6)" mask="url(#att-mask)" />
-            <ellipse cx="200" cy="185" rx="125" ry="150" fill="none"
-              stroke={faceIn ? "#34D399" : "#FF6B35"} strokeWidth="3" opacity="0.9" />
+            <defs><mask id="m1"><rect width="400" height="400" fill="white" /><ellipse cx="200" cy="185" rx="125" ry="150" fill="black" /></mask></defs>
+            <rect width="400" height="400" fill="rgba(0,0,0,0.55)" mask="url(#m1)" />
+            <ellipse cx="200" cy="185" rx="125" ry="150" fill="none" stroke={faceIn ? "#34D399" : "#FF6B35"} strokeWidth="3" opacity="0.9" />
           </svg>
-          {/* Flash */}
-          {flash && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.8)", borderRadius: "50%", pointerEvents: "none" }} />}
-
-          {/* Countdown */}
-          {phase === "locked" && countdown > 0 && (
-            <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", fontSize: 48, fontWeight: 900, color: "#FF6B35" }}>
-              {countdown}
-            </div>
-          )}
-          {/* Capture progress */}
+          {flash && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.85)", borderRadius: "50%", pointerEvents: "none" }} />}
+          {phase === "locked" && countdown > 0 && <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", fontSize: 52, fontWeight: 900, color: "#FF6B35" }}>{countdown}</div>}
           {phase === "capturing" && (
             <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 6 }}>
-              {[1,2,3,4,5].map((n) => (
-                <div key={n} style={{ width: 10, height: 10, borderRadius: "50%", background: n <= captureCount ? "#34D399" : "#333" }} />
-              ))}
+              {[1,2,3,4,5].map((n) => <div key={n} style={{ width: 10, height: 10, borderRadius: "50%", background: n <= captureCount ? "#34D399" : "#333" }} />)}
+            </div>
+          )}
+          {/* Liveness overlay */}
+          {(phase === "liveness" || phase === "liveness-fail") && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", paddingBottom: 20, pointerEvents: "none" }}>
+              <div style={{ background: phase === "liveness-fail" ? "rgba(248,113,113,0.9)" : "rgba(0,0,0,0.75)", borderRadius: 12, padding: "10px 20px", textAlign: "center" }}>
+                {phase === "liveness-fail"
+                  ? <span style={{ fontWeight: 700, fontSize: 14, color: "#fff" }}>❌ Wrong direction! Retry…</span>
+                  : <span style={{ fontWeight: 700, fontSize: 15 }}>{DIR_EMOJI[challenge]} Look {DIR_LABELS[challenge]}</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Liveness challenge panel (below oval) */}
+      {(phase === "liveness" || phase === "liveness-fail") && (
+        <div style={{ marginTop: 20, textAlign: "center" }}>
+          {phase === "liveness" && (
+            <div style={{ background: "rgba(255,107,53,0.12)", border: "1px solid rgba(255,107,53,0.4)", borderRadius: 14, padding: "14px 24px", minWidth: 220 }}>
+              <p style={{ margin: "0 0 6px", fontSize: 13, color: "#888" }}>Liveness Check</p>
+              <p style={{ margin: 0, fontSize: 26, fontWeight: 900 }}>{DIR_EMOJI[challenge]} {DIR_LABELS[challenge]}</p>
+              <div style={{ marginTop: 10, height: 4, background: "#222", borderRadius: 2 }}>
+                <div style={{ height: "100%", width: `${(livenessTimer / 5) * 100}%`, background: livenessTimer > 2 ? "#34D399" : "#f87171", borderRadius: 2, transition: "width 1s linear, background 0.3s" }} />
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 12, color: "#555" }}>{livenessTimer}s remaining · attempt {strikeCount + 1}/3</p>
             </div>
           )}
         </div>
       )}
 
       {/* Instruction pill */}
-      {scanning && (
+      {["scanning", "locked", "capturing"].includes(phase) && (
         <div style={{ marginTop: 20, background: "#111", border: "1px solid #222", borderRadius: 20, padding: "8px 18px", fontSize: 13, color: faceIn ? "#34D399" : "#888" }}>
           {phase === "locked" ? `Hold still… ${countdown}` : phase === "capturing" ? `Capturing ${captureCount}/5…` : "Centre your face in the oval"}
         </div>
@@ -338,39 +417,15 @@ export default function MarkAttendancePage() {
       {/* Result */}
       {phase === "done" && result && (
         <div style={{ textAlign: "center", maxWidth: 320 }}>
-          {result.status === "present" ? (
-            <>
-              <div style={{ fontSize: 72, marginBottom: 16 }}>✅</div>
-              <p style={{ fontSize: 22, fontWeight: 700, color: "#34D399" }}>Attendance Marked!</p>
-              <p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>You&apos;re marked <strong>Present</strong></p>
-            </>
-          ) : result.status === "flagged" ? (
-            <>
-              <div style={{ fontSize: 72, marginBottom: 16 }}>⚑</div>
-              <p style={{ fontSize: 18, fontWeight: 700, color: "#fbbf24" }}>Flagged for Review</p>
-              <p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>{result.rejectionReason}</p>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 72, marginBottom: 16 }}>❌</div>
-              <p style={{ fontSize: 18, fontWeight: 700, color: "#f87171" }}>Attendance Rejected</p>
-              <p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>{result.rejectionReason}</p>
-            </>
-          )}
-          <button
-            onClick={() => router.push("/student")}
-            style={{ marginTop: 24, padding: "12px 32px", background: "#FF6B35", border: "none", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}
-          >
-            Back to Dashboard
-          </button>
+          {result.status === "present" && <><div style={{ fontSize: 72, marginBottom: 16 }}>✅</div><p style={{ fontSize: 22, fontWeight: 700, color: "#34D399" }}>Attendance Marked!</p><p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>You&apos;re marked <strong>Present</strong></p></>}
+          {result.status === "flagged" && <><div style={{ fontSize: 72, marginBottom: 16 }}>⚑</div><p style={{ fontSize: 18, fontWeight: 700, color: "#fbbf24" }}>Flagged for Review</p><p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>{result.rejectionReason}</p></>}
+          {result.status === "rejected" && <><div style={{ fontSize: 72, marginBottom: 16 }}>❌</div><p style={{ fontSize: 18, fontWeight: 700, color: "#f87171" }}>Attendance Rejected</p><p style={{ color: "#666", fontSize: 13, marginTop: 8 }}>{result.rejectionReason}</p></>}
+          <button onClick={() => router.push("/student")} style={{ marginTop: 24, padding: "12px 32px", background: "#FF6B35", border: "none", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Back to Dashboard</button>
         </div>
       )}
 
-      {/* Back link */}
-      {!scanning && phase !== "done" && phase !== "loading" && phase !== "submitting" && (
-        <button onClick={() => router.push("/student")} style={{ marginTop: 20, background: "none", border: "none", color: "#555", fontSize: 13, cursor: "pointer" }}>
-          ← Back
-        </button>
+      {!scanning && !["done", "loading", "submitting", "warden-required"].includes(phase) && (
+        <button onClick={() => router.push("/student")} style={{ marginTop: 20, background: "none", border: "none", color: "#555", fontSize: 13, cursor: "pointer" }}>← Back</button>
       )}
     </div>
   );

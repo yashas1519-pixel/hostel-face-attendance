@@ -19,8 +19,8 @@ export class RegisterDto {
   @IsNotEmpty()
   name!: string;
 
-  @IsEnum(['student', 'admin'])
-  role!: 'student' | 'admin';
+  @IsEnum(['student', 'admin', 'warden'])
+  role!: 'student' | 'admin' | 'warden';
 
   @IsOptional()
   @IsString()

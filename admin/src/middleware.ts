@@ -21,10 +21,11 @@ export function middleware(req: NextRequest) {
 
   const isAdminRoute   = pathname.startsWith("/dashboard");
   const isStudentRoute = pathname.startsWith("/student");
+  const isWardenRoute  = pathname.startsWith("/warden");
   const isLoginPage    = pathname === "/login";
 
   // Redirect to login if hitting a protected route without a token
-  if ((isAdminRoute || isStudentRoute) && !token) {
+  if ((isAdminRoute || isStudentRoute || isWardenRoute) && !token) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
@@ -41,5 +42,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/student/:path*", "/login"],
+  matcher: ["/dashboard/:path*", "/student/:path*", "/warden/:path*", "/login"],
 };
