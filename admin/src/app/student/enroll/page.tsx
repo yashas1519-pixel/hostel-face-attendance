@@ -19,7 +19,7 @@ export default function EnrollPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
-  const countdownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [phase, setPhase] = useState<Phase>("permission");
   const [loadPct, setLoadPct] = useState(0);

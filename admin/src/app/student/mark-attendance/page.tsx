@@ -248,10 +248,8 @@ export default function MarkAttendancePage() {
   function startLivenessLoop(faceapi: any, dir: Direction, hId: string, win: ActiveWindow, strikes: number) {
     let lastTs = 0;
     let timeLeft = 5;
-    let timerInterval: ReturnType<typeof setInterval>;
-
     // Countdown timer
-    timerInterval = setInterval(() => {
+    const timerInterval = setInterval(() => {
       timeLeft--;
       setLivenessTimer(timeLeft);
       if (timeLeft <= 0) {
