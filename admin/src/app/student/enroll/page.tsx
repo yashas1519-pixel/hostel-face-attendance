@@ -56,6 +56,22 @@ export default function EnrollPage() {
   }, []);
 
   async function init() {
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
+    try {
+      const consentRes = await fetch(`${API}/consent/status`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` },
+      });
+      if (consentRes.ok) {
+        const consentData = await consentRes.json() as { consented: boolean };
+        if (!consentData.consented) {
+          router.push('/student/consent');
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     // ── Camera first ──────────────────────────────────────────────
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -183,6 +199,39 @@ export default function EnrollPage() {
     const video = videoRef.current;
     if (!video) return;
 
+    // ── Liveness check ─────────────────────────────────────────────────
+    setCaptureCount(-1);
+    let livenessDetected = false;
+    const livenessStart = Date.now();
+    while (Date.now() - livenessStart < 3000) {
+      const liveResult = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+        .withFaceLandmarks(true);
+      if (liveResult) {
+        const landmarks = liveResult.landmarks;
+        const noseTip = landmarks.getNose()[3]; // bottom of nose
+        const leftEye = landmarks.getLeftEye()[0];
+        const rightEye = landmarks.getRightEye()[3];
+        const faceCenter = (leftEye.x + rightEye.x) / 2;
+        const faceWidth = Math.abs(rightEye.x - leftEye.x);
+        const offset = noseTip.x - faceCenter;
+        if (offset < -faceWidth * 0.15) {
+          // Head turned left — liveness passed
+          livenessDetected = true;
+          break;
+        }
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    
+    if (!livenessDetected) {
+      setError("Please turn your head slightly left to prove you are present");
+      setPhaseSync("error");
+      return;
+    }
+    setCaptureCount(0);
+    setError("");
+
     // ── Snap photo on first frame for admin preview ────────────────────
     let facePhoto: string | undefined;
     try {
@@ -282,7 +331,7 @@ export default function EnrollPage() {
     loading: loadMsg,
     ready: "Position your face inside the oval",
     locked: `Hold still… ${countdown}`,
-    capturing: `Scanning… ${captureCount} / 15 — ${captureCount < 5 ? "Look straight" : captureCount < 10 ? "Turn slightly LEFT" : "Turn slightly RIGHT"}`,
+    capturing: captureCount === -1 ? "Turn your head SLIGHTLY LEFT then back to center" : `Scanning… ${captureCount} / 15 — ${captureCount < 5 ? "Look straight" : captureCount < 10 ? "Turn slightly LEFT" : "Turn slightly RIGHT"}`,
     submitting: "Uploading securely…",
     done: "Enrollment submitted!",
     error: error ?? "Something went wrong",

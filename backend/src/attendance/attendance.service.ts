@@ -27,6 +27,8 @@ interface GeoJsonPolygon {
 @Injectable()
 export class AttendanceService {
   private readonly logger = new Logger(AttendanceService.name);
+  private static readonly FACE_MATCH_PASS = 0.72;   // confident match
+  private static readonly FACE_MATCH_FLAG = 0.60;   // borderline (beard/glasses)
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Database,
@@ -193,9 +195,9 @@ export class AttendanceService {
     // < 0.60 → different person → rejected
     const storedEmbedding = this.enrollmentService.decryptEmbedding(student.faceEmbedding!);
     const faceMatchScore = cosineSimilarity(dto.embedding, storedEmbedding);
-    if (status === 'present' && faceMatchScore < 0.60) {
+    if (status === 'present' && faceMatchScore < AttendanceService.FACE_MATCH_FLAG) {
       reject(`Face does not match enrolled photo (score: ${faceMatchScore.toFixed(3)})`);
-    } else if (status === 'present' && faceMatchScore < 0.72) {
+    } else if (status === 'present' && faceMatchScore < AttendanceService.FACE_MATCH_PASS) {
       // Borderline — could be beard growth, glasses, lighting change
       // Mark as flagged instead of rejecting so admin can review
       status = 'flagged';

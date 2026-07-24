@@ -10,6 +10,7 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/roles.guard.js';
 import type { JwtPayload } from '../auth/jwt.strategy.js';
 import { AttendanceService } from './attendance.service.js';
@@ -21,6 +22,7 @@ export class AttendanceController {
 
   @Post('attendance/mark')
   @Auth('student')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   mark(@Body() dto: MarkAttendanceDto, @Req() req: { user: JwtPayload }) {
     return this.attendance.markAttendance(req.user.sub, dto);
   }

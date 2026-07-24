@@ -202,3 +202,17 @@ export const livenessFailures = pgTable('liveness_failures', {
   resolvedBy: uuid('resolved_by').references(() => users.id),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 });
+
+// ── Consent Records (DPDP Act 2023) ────────────────────────────────────
+export const consentRecords = pgTable('consent_records', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  studentId: uuid('student_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  consentVersion: text('consent_version').notNull().default('1.0'),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  withdrawn: boolean('withdrawn').notNull().default(false),
+  withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+}, (t) => ({
+  studentIdx: index('consent_student_idx').on(t.studentId),
+}));

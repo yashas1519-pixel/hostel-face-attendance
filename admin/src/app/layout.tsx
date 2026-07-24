@@ -20,6 +20,8 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
+import ErrorBoundary from '@/components/ErrorBoundary';
+
 export default function RootLayout({
   children,
 }: {
@@ -28,7 +30,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body>
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </ToastProvider>
       </body>
     </html>
   );

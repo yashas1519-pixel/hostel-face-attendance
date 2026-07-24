@@ -8,6 +8,7 @@ import { EnrollmentModule } from './enrollment/enrollment.module.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { LeaveModule } from './leave/leave.module.js';
 import { WardenModule } from './warden/warden.module.js';
+import { ConsentModule } from './consent/consent.module.js';
 import { HealthController } from './health.controller.js';
 
 @Module({
@@ -21,6 +22,7 @@ import { HealthController } from './health.controller.js';
     AttendanceModule,
     LeaveModule,
     WardenModule,
+    ConsentModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -16,6 +16,9 @@ import type { CreateWindowDto, UpdateWindowDto } from './window.dto.js';
 
 @Injectable()
 export class HostelService {
+  // ponytail: 60s in-memory cache for active window — avoids repeated DB hits during check-in rush
+  private readonly windowCache = new Map<string, { result: unknown; expiresAt: number }>();
+
   constructor(@Inject(DB_TOKEN) private readonly db: Database) {}
 
   async create(dto: CreateHostelDto, adminId: string) {
@@ -172,34 +175,28 @@ export class HostelService {
   }
 
   async getActiveWindow(hostelId: string) {
-    // ponytail: times are stored in IST (admin enters local time) — compare in IST (UTC+5:30)
-    const now = new Date();
-    const istOffset = 5 * 60 + 30; // minutes
-    const istMs = now.getTime() + istOffset * 60_000;
-    const ist = new Date(istMs);
+    // Check cache first
+    const cached = this.windowCache.get(hostelId);
+    if (cached && Date.now() < cached.expiresAt) return cached.result;
 
-    const hh = ist.getUTCHours().toString().padStart(2, '0');
-    const mm = ist.getUTCMinutes().toString().padStart(2, '0');
-    const currentTime = `${hh}:${mm}`;
-    const currentDay = ist.getUTCDay(); // 0=Sun..6=Sat in IST
+    // ponytail: times stored in IST — compare in IST (UTC+5:30)
+    const now = new Date();
+    const istMs = now.getTime() + (5 * 60 + 30) * 60_000;
+    const ist = new Date(istMs);
+    const currentTime = `${ist.getUTCHours().toString().padStart(2, '0')}:${ist.getUTCMinutes().toString().padStart(2, '0')}`;
+    const currentDay = ist.getUTCDay();
 
     const windows = await this.db
       .select()
       .from(checkInWindows)
-      .where(
-        and(
-          eq(checkInWindows.hostelId, hostelId),
-          eq(checkInWindows.isActive, true),
-        ),
-      );
+      .where(and(eq(checkInWindows.hostelId, hostelId), eq(checkInWindows.isActive, true)));
 
     const active = windows.find(
-      (w) =>
-        w.daysOfWeek.includes(currentDay) &&
-        w.startTime <= currentTime &&
-        currentTime <= w.endTime,
-    );
+      (w) => w.daysOfWeek.includes(currentDay) && w.startTime <= currentTime && currentTime <= w.endTime,
+    ) ?? null;
 
-    return active ?? null;
+    // Cache for 60 seconds
+    this.windowCache.set(hostelId, { result: active, expiresAt: Date.now() + 60_000 });
+    return active;
   }
 }

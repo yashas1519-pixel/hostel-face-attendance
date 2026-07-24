@@ -227,9 +227,19 @@ export default function MarkAttendancePage() {
     setMsg("Loading face models…");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const faceapi = (await import("face-api.js")) as any;
-    await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
-    await faceapi.nets.faceLandmark68TinyNet.loadFromUri("/models");
-    await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+    // Load from CDN for global performance — /models is a fallback
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+    const loadModels = async (url: string) => {
+      await faceapi.nets.tinyFaceDetector.loadFromUri(url);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(url);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(url);
+    };
+    try {
+      await loadModels(MODEL_URL);
+    } catch {
+      // CDN failed — fall back to local /models
+      await loadModels('/models');
+    }
     fapiRef.current = faceapi;
 
     setPhaseSync("scanning");
