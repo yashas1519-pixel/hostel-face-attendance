@@ -80,7 +80,10 @@ export default function EnrollPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const faceapi = (await import("face-api.js")) as any;
       await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
-      setLoadPct(55);
+      setLoadPct(40);
+      setLoadMsg("Loading landmark model…");
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri("/models");
+      setLoadPct(70);
       setLoadMsg("Loading recognition model…");
       await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
       setLoadPct(100);
@@ -191,7 +194,8 @@ export default function EnrollPage() {
       setCaptureCount(i + 1);
 
       const result = await faceapi
-        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }))
+        .withFaceLandmarks(true)   // true = use tiny landmark model
         .withFaceDescriptor();
 
       if (!result) {
