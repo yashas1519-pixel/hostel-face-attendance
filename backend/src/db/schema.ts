@@ -47,6 +47,7 @@ export const users = pgTable('users', {
   enrollmentStatus: enrollmentStatusEnum('enrollment_status')
     .notNull()
     .default('none'),
+  facePhoto: text('face_photo'), // base64 JPEG captured at enrollment time
   // Account lockout — server-side brute-force protection
   loginAttempts: integer('login_attempts').notNull().default(0),
   lockedUntil: timestamp('locked_until', { withTimezone: true }),

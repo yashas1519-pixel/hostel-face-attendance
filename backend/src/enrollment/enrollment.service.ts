@@ -35,6 +35,7 @@ export class EnrollmentService {
         faceEmbedding: encrypted,
         enrollmentStatus: 'pending',
         embeddingEnrolledAt: new Date(),
+        ...(dto.facePhoto ? { facePhoto: dto.facePhoto } : {}),
       })
       .where(eq(users.id, studentId));
 
@@ -111,6 +112,7 @@ export class EnrollmentService {
         rollNumber: users.rollNumber,
         status: users.enrollmentStatus,
         submittedAt: users.embeddingEnrolledAt,
+        facePhoto: users.facePhoto,
       })
       .from(users)
       .where(whereClause)

@@ -110,6 +110,7 @@ export default function EnrollmentsPage() {
         <table className="table">
           <thead>
             <tr>
+              <th>Photo</th>
               <th>Student</th>
               <th>Roll No</th>
               <th>Submitted</th>
@@ -137,7 +138,29 @@ export default function EnrollmentsPage() {
                     </tr>
                   )
                 : enrollments.map((e) => (
-                    <tr key={e.id}>
+                  <tr key={e.id}>
+                      <td>
+                        {(e as Enrollment & { facePhoto?: string }).facePhoto ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={(e as Enrollment & { facePhoto?: string }).facePhoto}
+                            alt={`${e.studentName} face`}
+                            style={{
+                              width: 48, height: 48, borderRadius: "50%",
+                              objectFit: "cover",
+                              border: "2px solid #2a2a2a",
+                              display: "block",
+                            }}
+                          />
+                        ) : (
+                          <div style={{
+                            width: 48, height: 48, borderRadius: "50%",
+                            background: "#1a1a1a", border: "2px solid #2a2a2a",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 20,
+                          }}>👤</div>
+                        )}
+                      </td>
                       <td>{e.studentName}</td>
                       <td>{e.rollNumber}</td>
                       <td>{new Date(e.submittedAt).toLocaleDateString()}</td>

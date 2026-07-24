@@ -183,6 +183,21 @@ export default function EnrollPage() {
     const video = videoRef.current;
     if (!video) return;
 
+    // ── Snap photo on first frame for admin preview ────────────────────
+    let facePhoto: string | undefined;
+    try {
+      const snap = document.createElement("canvas");
+      snap.width = 200; snap.height = 200;
+      const ctx = snap.getContext("2d")!;
+      // mirror + crop-to-square from video centre
+      const side = Math.min(video.videoWidth, video.videoHeight);
+      const ox = (video.videoWidth - side) / 2;
+      const oy = (video.videoHeight - side) / 2;
+      ctx.scale(-1, 1); ctx.translate(-200, 0); // mirror to match what user sees
+      ctx.drawImage(video, ox, oy, side, side, 0, 0, 200, 200);
+      facePhoto = snap.toDataURL("image/jpeg", 0.6); // ~5-15KB base64
+    } catch { /* non-critical */ }
+
     const descriptors: Float32Array[] = [];
 
     for (let i = 0; i < 5; i++) {
@@ -215,7 +230,7 @@ export default function EnrollPage() {
     try {
       const res = await fetchWithAuth("/enrollment/submit", {
         method: "POST",
-        body: JSON.stringify({ embedding: Array.from(avg) }),
+        body: JSON.stringify({ embedding: Array.from(avg), facePhoto }),
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => ({}))) as { message?: string };
