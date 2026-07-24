@@ -93,8 +93,7 @@ export default function EnrollPage() {
     setLoadPct(5);
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const faceapi = (await import("face-api.js")) as any;
+      const faceapi = await import("face-api.js");
       await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
       setLoadPct(40);
       setLoadMsg("Loading landmark model…");
@@ -111,11 +110,9 @@ export default function EnrollPage() {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function startLoop(faceapi: any) {
+  function startLoop(faceapi: typeof import('face-api.js')) {
     let lastDetectTs = 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastResults: any[] = [];
+    let lastResults: import('face-api.js').FaceDetection[] = [];
     let angleVal = 0;
 
     const loop = async (ts: number) => {
@@ -176,8 +173,7 @@ export default function EnrollPage() {
     rafRef.current = requestAnimationFrame(loop);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function scheduleCapture(faceapi: any, _startTs: number) {
+  function scheduleCapture(faceapi: typeof import('face-api.js'), _startTs: number) {
     // Countdown 3 → 2 → 1 then capture
     let count = 3;
     const tick = () => {
@@ -192,8 +188,7 @@ export default function EnrollPage() {
     countdownTimerRef.current = setTimeout(tick, 1000);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const doCapture = useCallback(async (faceapi: any) => {
+  const doCapture = useCallback(async (faceapi: typeof import('face-api.js')) => {
     cancelAnimationFrame(rafRef.current);
     setPhaseSync("capturing");
     const video = videoRef.current;

@@ -19,12 +19,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install Dependencies
         run: cd backend && npm ci
 
       - name: Build
         run: cd backend && npm run build
+
+      - name: Run Unit Tests
+        run: cd backend && npx jest --passWithNoTests --forceExit --testTimeout=5000
+        env:
+          DATABASE_URL: '' # tests use mocks, no real DB needed
 
   frontend-check:
     runs-on: ubuntu-latest
@@ -36,6 +43,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
 
       - name: Install Dependencies
         run: cd admin && npm ci

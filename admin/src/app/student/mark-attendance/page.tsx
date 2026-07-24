@@ -36,8 +36,7 @@ function getDeviceId(): string {
   return id;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function detectHeadDirection(landmarks: any): Direction | "center" {
+function detectHeadDirection(landmarks: import("face-api.js").FaceLandmarks68): Direction | "center" {
   const pts = landmarks.positions as { x: number; y: number }[];
   const noseTip    = pts[30];
   const leftEye    = pts[36];
@@ -125,6 +124,7 @@ export default function MarkAttendancePage() {
   useEffect(() => {
     void boot();
     return () => { cancelAnimationFrame(rafRef.current); streamRef.current?.getTracks().forEach((t) => t.stop()); };
+    // Intentional: we only want to run boot() once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -225,8 +225,7 @@ export default function MarkAttendancePage() {
     streamRef.current = stream;
 
     setMsg("Loading face models…");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const faceapi = (await import("face-api.js")) as any;
+    const faceapi = await import("face-api.js");
     // Load from CDN for global performance — /models is a fallback
     const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
     const loadModels = async (url: string) => {
@@ -254,11 +253,9 @@ export default function MarkAttendancePage() {
   }
 
   // ── Scan loop ────────────────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function startScanLoop(faceapi: any, hId: string, win: ActiveWindow) {
+  function startScanLoop(faceapi: typeof import('face-api.js'), hId: string, win: ActiveWindow) {
     let lastTs = 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastResults: any[] = [];
+    let lastResults: import('face-api.js').FaceDetection[] = [];
     let angle = 0;
     let locked = false;
 
@@ -305,8 +302,7 @@ export default function MarkAttendancePage() {
   }
 
   // ── STEP 2b: Capture embedding ────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const doCapture = useCallback(async (faceapi: any, hId: string, win: ActiveWindow) => {
+  const doCapture = useCallback(async (faceapi: typeof import('face-api.js'), hId: string, win: ActiveWindow) => {
     cancelAnimationFrame(rafRef.current);
     setPhaseSync("capturing");
     const video = videoRef.current;
@@ -334,12 +330,12 @@ export default function MarkAttendancePage() {
     setLivenessTimer(10);
     setPhaseSync("liveness");
     startLivenessLoop(faceapi, dir, hId, win, 0);
+  // Intentional: empty deps, dependencies are read from refs
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── STEP 3: Liveness loop ─────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function startLivenessLoop(faceapi: any, dir: Direction, hId: string, win: ActiveWindow, strikes: number) {
+  function startLivenessLoop(faceapi: typeof import('face-api.js'), dir: Direction, hId: string, win: ActiveWindow, strikes: number) {
     let lastTs = 0;
     let timeLeft = 10;
     setLivenessTimer(10);
@@ -402,8 +398,7 @@ export default function MarkAttendancePage() {
           void videoRef.current.play().catch(() => {});
         }
         setPhaseSync("liveness");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        startLivenessLoop(faceapi as any, newDir, hId, win, newStrikes);
+        startLivenessLoop(faceapi as typeof import('face-api.js'), newDir, hId, win, newStrikes);
       }, 2000);
     }
   }
@@ -435,6 +430,7 @@ export default function MarkAttendancePage() {
       setPhaseSync("error");
       setMsg(e instanceof Error ? e.message : "Submission failed");
     }
+  // Intentional: dependencies are read from refs to avoid stale closures
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

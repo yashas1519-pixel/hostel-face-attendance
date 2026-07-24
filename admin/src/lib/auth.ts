@@ -49,7 +49,7 @@ async function tryRefresh(): Promise<boolean> {
     const res = await fetch(`${API_URL}/auth/refresh`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
       body: JSON.stringify({ refreshToken }),
     });
     if (!res.ok) return false;
@@ -83,6 +83,7 @@ export async function fetchWithAuth(
   const headers = new Headers(options.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  headers.set("X-Requested-With", "XMLHttpRequest");
 
   const reqOptions: RequestInit = {
     ...options,

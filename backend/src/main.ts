@@ -9,7 +9,29 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // Security headers — CSP, X-Frame-Options, HSTS, etc.
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+    hsts: {
+      maxAge: 31_536_000,  // 1 year
+      includeSubDomains: true,
+      preload: true,
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    permittedCrossDomainPolicies: false,
+    crossOriginEmbedderPolicy: false, // needed for face-api model loading
+  }));
   app.use(cookieParser());
 
   app.setGlobalPrefix('api/v1');
