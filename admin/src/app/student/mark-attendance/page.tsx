@@ -207,7 +207,8 @@ export default function MarkAttendancePage() {
         await startCamera(hId, checkedWin);
       } catch (locErr) {
         setPhaseSync("location-fail");
-        setMsg(locErr instanceof Error && locErr.code === 1
+        const geoErr = locErr as GeolocationPositionError;
+        setMsg(geoErr?.code === 1
           ? "Location permission denied. Please allow location access."
           : "Could not get your location. Try again.");
       }
