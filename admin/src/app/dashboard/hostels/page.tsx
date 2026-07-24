@@ -11,11 +11,27 @@ import {
 } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 
-// ── Leaflet is client-only ─────────────────────────────────
+// Minimal Leaflet types for CDN-loaded Leaflet (no @types/leaflet needed)
+interface LeafletMap {
+  remove(): void;
+  setView(center: [number, number], zoom: number): LeafletMap;
+  on(event: string, fn: (e: { latlng: { lat: number; lng: number } }) => void): LeafletMap;
+}
+interface LeafletPolyline {
+  setLatLngs(latlngs: [number, number][]): void;
+  addTo(map: LeafletMap): LeafletPolyline;
+}
+interface LeafletMarker {
+  remove(): void;
+}
 declare global {
   interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    L: any;
+    L: {
+      map(el: HTMLDivElement): LeafletMap;
+      tileLayer(url: string, opts: { attribution: string; maxZoom: number }): { addTo(m: LeafletMap): void };
+      polyline(latlngs: [number, number][], opts: { color: string }): LeafletPolyline;
+      marker(latlng: [number, number]): LeafletMarker & { addTo(m: LeafletMap): LeafletMarker };
+    };
   }
 }
 
@@ -49,12 +65,9 @@ function LeafletMap({
   onChange: (pts: LatLng[]) => void;
 }) {
   const divRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mapRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const polyRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markersRef = useRef<any[]>([]);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const polyRef = useRef<LeafletPolyline | null>(null);
+  const markersRef = useRef<LeafletMarker[]>([]);
   const pointsRef = useRef<LatLng[]>(initialPoints);
 
   useEffect(() => {
