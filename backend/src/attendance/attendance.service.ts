@@ -177,7 +177,7 @@ export class AttendanceService {
           lastRecord.deviceLat, lastRecord.deviceLng,
           dto.deviceLat, dto.deviceLng,
         );
-        const secsElapsed = (now.getTime() - lastRecord.markedAt.getTime()) / 1000;
+        const secsElapsed = (nowUtc.getTime() - lastRecord.markedAt.getTime()) / 1000;
         impliedSpeedMps = secsElapsed > 0 ? distM / secsElapsed : 0;
 
         if (impliedSpeedMps > 40) {
@@ -206,7 +206,7 @@ export class AttendanceService {
 
     // ── Step 9: Buddy-punching detector ────────────────────────────────────
     if (status === 'present') {
-      const todayStart = new Date(now);
+      const todayStart = new Date(nowUtc);
       todayStart.setUTCHours(0, 0, 0, 0);
       const [deviceCount] = await this.db
         .select({ count: sql<number>`count(DISTINCT ${attendanceRecords.studentId})::int` })
