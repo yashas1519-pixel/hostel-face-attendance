@@ -133,7 +133,6 @@ export default function MarkAttendancePage() {
       setMsg("Starting camera…");
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
 
       setMsg("Loading face models…");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,9 +142,17 @@ export default function MarkAttendancePage() {
       await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
       fapiRef.current = faceapi;
 
+      // Set scanning phase FIRST so the video element mounts, then attach stream
       setPhaseSync("scanning");
       setMsg("Centre your face in the oval");
-      startScanLoop(faceapi, me.hostelId, win);
+      // Small tick to let React render the <video> element before attaching stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          void videoRef.current.play();
+        }
+        startScanLoop(faceapi, me.hostelId, win);
+      }, 100);
     } catch (e) {
       setPhaseSync("error");
       setMsg(e instanceof Error ? e.message : "Setup failed");
@@ -383,7 +390,7 @@ export default function MarkAttendancePage() {
         <div style={{ position: "relative", width: "min(340px,88vw)", aspectRatio: "1" }}>
           <div style={{ position: "absolute", inset: -4, borderRadius: "50%", background: `conic-gradient(from ${scanDeg}deg, #FF6B35, #ff9a35, transparent 60%)`, opacity: faceIn ? 1 : 0.4, transition: "opacity 0.4s" }} />
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden", background: "#111" }}>
-            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
+            <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: "block" }} onLoadedMetadata={() => { void videoRef.current?.play(); }} />
           </div>
           <svg viewBox="0 0 400 400" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
             <defs><mask id="m1"><rect width="400" height="400" fill="white" /><ellipse cx="200" cy="185" rx="125" ry="150" fill="black" /></mask></defs>
