@@ -4,204 +4,210 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { fetchWithAuth } from "@/lib/auth";
 
-type Phase = "permission" | "loading" | "detecting" | "capturing" | "submitting" | "done" | "error";
-
-const MODEL_URL =
-  "https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights";
+type Phase =
+  | "permission"
+  | "loading"
+  | "ready"       // scanning for face
+  | "locked"      // face found, countdown
+  | "capturing"   // 5 frames
+  | "submitting"
+  | "done"
+  | "error";
 
 export default function EnrollPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
-  const scanLineRef = useRef(0);
+  const countdownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [phase, setPhase] = useState<Phase>("permission");
-  const [modelProgress, setModelProgress] = useState(0);
-  const [faceDetected, setFaceDetected] = useState(false);
+  const [loadPct, setLoadPct] = useState(0);
+  const [loadMsg, setLoadMsg] = useState("Starting camera…");
+  const [faceIn, setFaceIn] = useState(false);
+  const [countdown, setCountdown] = useState(3);
   const [captureCount, setCaptureCount] = useState(0);
   const [flash, setFlash] = useState(false);
+  const [scanDeg, setScanDeg] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [videoSize, setVideoSize] = useState({ w: 640, h: 480 });
 
-  // ── Step 1: camera starts IMMEDIATELY ────────────────────────────────
+  // mutable refs so the RAF loop can read latest values
+  const phaseRef = useRef<Phase>("permission");
+  const faceInRef = useRef(false);
+  const lockedSinceRef = useRef<number | null>(null);
+
+  function setPhaseSync(p: Phase) {
+    phaseRef.current = p;
+    setPhase(p);
+  }
+
+  function setFaceInSync(v: boolean) {
+    faceInRef.current = v;
+    setFaceIn(v);
+  }
+
   useEffect(() => {
-    void startCamera();
+    void init();
     return () => {
       cancelAnimationFrame(rafRef.current);
+      if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
-  async function startCamera() {
+  async function init() {
+    // ── Camera first ──────────────────────────────────────────────
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
       if (!videoRef.current) return;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-      setVideoSize({ w: videoRef.current.videoWidth, h: videoRef.current.videoHeight });
-      setPhase("loading");
-      void loadModels();
     } catch {
-      setError("Camera permission denied — please allow camera access and reload.");
-      setPhase("error");
+      setError("Camera access denied — please allow camera and reload.");
+      setPhaseSync("error");
+      return;
     }
-  }
 
-  async function loadModels() {
+    // ── Load models from /public/models (no CDN dependency) ───────
+    setPhaseSync("loading");
+    setLoadMsg("Loading face detector…");
+    setLoadPct(5);
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const faceapi = (await import("face-api.js")) as any;
-      setModelProgress(10);
-      await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
-      setModelProgress(60);
-      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
-      setModelProgress(100);
-      setPhase("detecting");
-      startDetectionLoop(faceapi);
-    } catch {
-      setError("Failed to load face detection models. Check your internet connection.");
-      setPhase("error");
+      await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+      setLoadPct(55);
+      setLoadMsg("Loading recognition model…");
+      await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+      setLoadPct(100);
+      setPhaseSync("ready");
+      startLoop(faceapi);
+    } catch (e) {
+      setError(`Model load failed: ${e instanceof Error ? e.message : String(e)}`);
+      setPhaseSync("error");
     }
   }
 
-  // ── Detection loop with canvas overlay ────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function startDetectionLoop(faceapi: any) {
-    let lastDetect = 0;
+  function startLoop(faceapi: any) {
+    let lastDetectTs = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastDetections: any[] = [];
+    let lastResults: any[] = [];
+    let angleVal = 0;
 
-    const draw = async (ts: number) => {
-      const canvas = overlayCanvasRef.current;
+    const loop = async (ts: number) => {
+      const p = phaseRef.current;
+      if (p === "capturing" || p === "submitting" || p === "done" || p === "error") return;
+
+      // Spin the border
+      angleVal = (angleVal + 3) % 360;
+      setScanDeg(angleVal);
+
+      // Detect every 300 ms
       const video = videoRef.current;
-      if (!canvas || !video || video.readyState < 2) {
-        rafRef.current = requestAnimationFrame(draw);
-        return;
+      if (video && video.readyState >= 2 && ts - lastDetectTs > 300) {
+        lastDetectTs = ts;
+        try {
+          lastResults = await faceapi
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
+            .withFaceDescriptors();
+        } catch {
+          lastResults = [];
+        }
       }
 
-      const W = video.videoWidth;
-      const H = video.videoHeight;
-      if (canvas.width !== W) { canvas.width = W; canvas.height = H; }
-
-      const ctx = canvas.getContext("2d")!;
-      ctx.clearRect(0, 0, W, H);
-
-      // Run face detection every 300ms (not every frame — expensive)
-      if (ts - lastDetect > 300) {
-        lastDetect = ts;
-        lastDetections = await faceapi
-          .detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.55 }))
-          .withFaceDescriptors();
-        setFaceDetected(lastDetections.length === 1);
+      // Is the face centred in the oval?
+      let inOval = false;
+      if (video && lastResults.length === 1) {
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 640;
+        const box = lastResults[0].detection.box;
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        const ox = vw * 0.5, oy = vh * 0.45, rx = vw * 0.32, ry = vh * 0.38;
+        inOval = ((cx - ox) / rx) ** 2 + ((cy - oy) / ry) ** 2 <= 1.0
+          && box.width > vw * 0.15; // face must be big enough
       }
 
-      // Animated scan line (always drawn)
-      scanLineRef.current = (scanLineRef.current + 2) % H;
-      const gradient = ctx.createLinearGradient(0, scanLineRef.current - 20, 0, scanLineRef.current + 20);
-      gradient.addColorStop(0, "transparent");
-      gradient.addColorStop(0.5, lastDetections.length === 1 ? "rgba(34,197,94,0.6)" : "rgba(255,90,90,0.4)");
-      gradient.addColorStop(1, "transparent");
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, scanLineRef.current - 20, W, 40);
+      setFaceInSync(inOval);
 
-      // Face box + corner brackets
-      if (lastDetections.length === 1) {
-        const box = lastDetections[0].detection.box;
-        const pad = 16;
-        const x = box.x - pad, y = box.y - pad;
-        const bw = box.width + pad * 2, bh = box.height + pad * 2;
-
-        // Glowing box
-        ctx.save();
-        ctx.shadowColor = "#22c55e";
-        ctx.shadowBlur = 24;
-        ctx.strokeStyle = "rgba(34,197,94,0.5)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, bw, bh);
-        ctx.restore();
-
-        // Corner brackets
-        const cLen = 28;
-        ctx.save();
-        ctx.strokeStyle = "#22c55e";
-        ctx.lineWidth = 4;
-        ctx.lineCap = "round";
-        ctx.shadowColor = "#22c55e";
-        ctx.shadowBlur = 12;
-        [
-          [x, y + cLen, x, y, x + cLen, y],
-          [x + bw - cLen, y, x + bw, y, x + bw, y + cLen],
-          [x, y + bh - cLen, x, y + bh, x + cLen, y + bh],
-          [x + bw - cLen, y + bh, x + bw, y + bh, x + bw, y + bh - cLen],
-        ].forEach(([x1, y1, cx, cy, x2, y2]) => {
-          ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(cx, cy);
-          ctx.lineTo(x2, y2);
-          ctx.stroke();
-        });
-        ctx.restore();
-
-        // "Face detected" label
-        ctx.save();
-        ctx.fillStyle = "rgba(34,197,94,0.85)";
-        ctx.roundRect?.(x, y - 28, 130, 22, 6);
-        ctx.fill();
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 12px Inter, sans-serif";
-        ctx.fillText("✓ Face detected", x + 8, y - 11);
-        ctx.restore();
+      // ── Auto-countdown when face is locked ────────────────────
+      if (inOval && p === "ready") {
+        if (!lockedSinceRef.current) {
+          lockedSinceRef.current = ts;
+          setPhaseSync("locked");
+          setCountdown(3);
+          scheduleCapture(faceapi, lastResults[0].descriptor, ts, lastResults);
+        }
+      } else if (!inOval && p === "locked") {
+        // Face moved — reset
+        lockedSinceRef.current = null;
+        if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current);
+        setPhaseSync("ready");
+        setCountdown(3);
       }
 
-      rafRef.current = requestAnimationFrame(draw);
+      rafRef.current = requestAnimationFrame(loop);
     };
 
-    rafRef.current = requestAnimationFrame(draw);
+    rafRef.current = requestAnimationFrame(loop);
   }
 
-  // ── Capture 5 frames ────────────────────────────────────────────────
-  const captureFrames = useCallback(async () => {
-    if (!faceDetected || !videoRef.current) return;
-    cancelAnimationFrame(rafRef.current);
-    setPhase("capturing");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function scheduleCapture(faceapi: any, _firstDescriptor: Float32Array, _startTs: number, _lastResults: any[]) {
+    // Countdown 3 → 2 → 1 then capture
+    let count = 3;
+    const tick = () => {
+      count -= 1;
+      setCountdown(count);
+      if (count <= 0) {
+        void doCapture(faceapi);
+      } else {
+        countdownTimerRef.current = setTimeout(tick, 1000);
+      }
+    };
+    countdownTimerRef.current = setTimeout(tick, 1000);
+  }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const faceapi = (await import("face-api.js")) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doCapture = useCallback(async (faceapi: any) => {
+    cancelAnimationFrame(rafRef.current);
+    setPhaseSync("capturing");
+    const video = videoRef.current;
+    if (!video) return;
+
     const descriptors: Float32Array[] = [];
 
     for (let i = 0; i < 5; i++) {
-      // Flash effect
+      // Flash
       setFlash(true);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, 100));
       setFlash(false);
-      await new Promise((r) => setTimeout(r, 380));
-
+      await new Promise((r) => setTimeout(r, 400));
       setCaptureCount(i + 1);
 
       const result = await faceapi
-        .detectSingleFace(videoRef.current!, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
         .withFaceDescriptor();
 
       if (!result) {
-        setError("Face lost during capture — please try again.");
-        setPhase("error");
+        setError("Face moved during capture — please try again.");
+        setPhaseSync("error");
         return;
       }
       descriptors.push(result.descriptor);
     }
 
-    // Average the 5 descriptors
+    // Average
     const avg = new Float32Array(128);
-    for (const d of descriptors) d.forEach((v, i) => { avg[i] += v; });
+    for (const d of descriptors) d.forEach((v: number, i: number) => { avg[i] += v; });
     avg.forEach((_, i) => { avg[i] /= descriptors.length; });
 
-    setPhase("submitting");
+    setPhaseSync("submitting");
     try {
       const res = await fetchWithAuth("/enrollment/submit", {
         method: "POST",
@@ -212,336 +218,324 @@ export default function EnrollPage() {
         throw new Error(b.message ?? "Submission failed");
       }
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      setPhase("done");
+      setPhaseSync("done");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submission failed");
-      setPhase("error");
+      setPhaseSync("error");
     }
-  }, [faceDetected]);
+  }, []);
 
-  // ── UI ───────────────────────────────────────────────────────────────
-  const showCamera = phase !== "permission" && phase !== "done" && phase !== "error";
+  // ── Derived ──────────────────────────────────────────────────────────
+  const isScanning = phase === "ready" || phase === "locked";
+  const borderColor = phase === "locked" ? "#22c55e" : faceIn ? "#22c55e" : "rgba(255,255,255,0.35)";
+  const glowColor = phase === "locked" ? "0 0 0 4px rgba(34,197,94,0.25)" : "none";
+  const conicGrad = `conic-gradient(from ${scanDeg}deg, transparent 0deg, ${borderColor} 60deg, transparent 120deg)`;
+
+  const statusText = {
+    permission: "Requesting camera…",
+    loading: loadMsg,
+    ready: "Position your face inside the oval",
+    locked: `Hold still… ${countdown}`,
+    capturing: `Capturing ${captureCount} / 5`,
+    submitting: "Uploading securely…",
+    done: "Enrollment submitted!",
+    error: error ?? "Something went wrong",
+  }[phase];
 
   return (
     <div style={{
       minHeight: "100vh",
-      background: "#0a0a0a",
+      background: "#000",
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      padding: "24px",
       fontFamily: "'Inter', -apple-system, sans-serif",
+      overflow: "hidden",
     }}>
-      <div style={{
-        width: "100%",
-        maxWidth: 680,
-        background: "#111",
-        border: "1px solid #1f1f1f",
-        borderRadius: 24,
-        overflow: "hidden",
-        boxShadow: "0 0 80px rgba(255,90,90,0.1)",
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: "24px 28px 0",
-          textAlign: "center",
-        }}>
-          <h1 style={{ color: "#fff", fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>
-            Face Enrollment
-          </h1>
-          <p style={{ color: "#555", fontSize: 13, margin: 0 }}>
-            One-time setup · your face is used to verify attendance
+      {/* ── Done screen ─────────────────────────────────────── */}
+      {phase === "done" && (
+        <div style={{ textAlign: "center", padding: 32 }}>
+          <div style={{
+            width: 100, height: 100, borderRadius: "50%",
+            background: "rgba(34,197,94,0.15)",
+            border: "2px solid #22c55e",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 48, margin: "0 auto 24px",
+            boxShadow: "0 0 40px rgba(34,197,94,0.3)",
+          }}>✓</div>
+          <h2 style={{ color: "#fff", fontSize: 22, margin: "0 0 10px" }}>Face Enrolled!</h2>
+          <p style={{ color: "#555", fontSize: 14, maxWidth: 280, margin: "0 auto 28px" }}>
+            Awaiting admin approval. Once approved, use the mobile app to mark attendance.
           </p>
+          <button
+            onClick={() => router.push("/student")}
+            style={{
+              background: "linear-gradient(135deg,#ff5a5a,#ff8a5a)",
+              border: "none", borderRadius: 14, color: "#fff",
+              padding: "14px 36px", fontWeight: 700, fontSize: 15, cursor: "pointer",
+            }}
+          >
+            Go to Dashboard →
+          </button>
         </div>
+      )}
 
-        {/* Camera viewport — always rendered so it starts immediately */}
-        <div style={{
-          position: "relative",
-          margin: "20px 0 0",
-          background: "#000",
-          display: showCamera ? "block" : "none",
-          aspectRatio: "4/3",
-          overflow: "hidden",
-        }}>
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
+      {/* ── Error screen ────────────────────────────────────── */}
+      {phase === "error" && (
+        <div style={{ textAlign: "center", padding: 32, maxWidth: 320 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <p style={{ color: "#ff5a5a", fontSize: 15, marginBottom: 24 }}>{error}</p>
+          <button
+            onClick={() => window.location.reload()}
             style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-              transform: "scaleX(-1)", // mirror for natural feel
+              background: "#1a1a1a", border: "1px solid #333", borderRadius: 12,
+              color: "#aaa", padding: "11px 28px", cursor: "pointer", fontSize: 14,
             }}
-          />
-          {/* Canvas overlay for face detection graphics */}
-          <canvas
-            ref={overlayCanvasRef}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              transform: "scaleX(-1)",
-              pointerEvents: "none",
-            }}
-          />
-          {/* Photo flash effect */}
-          {flash && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(255,255,255,0.85)",
-              pointerEvents: "none",
-              zIndex: 10,
-            }} />
-          )}
+          >
+            Try Again
+          </button>
+        </div>
+      )}
 
-          {/* Model loading overlay */}
-          {phase === "loading" && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(10,10,10,0.7)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 16,
-              backdropFilter: "blur(4px)",
-            }}>
+      {/* ── Camera scanning screen ───────────────────────────── */}
+      {phase !== "done" && phase !== "error" && (
+        <div style={{ width: "100%", maxWidth: 420, padding: "0 16px" }}>
+          {/* Title */}
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <h1 style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: "0 0 4px" }}>
+              Face Enrollment
+            </h1>
+            <p style={{ color: "#555", fontSize: 13, margin: 0 }}>
+              One-time setup for attendance
+            </p>
+          </div>
+
+          {/* Camera + oval */}
+          <div style={{
+            position: "relative",
+            width: "100%",
+            paddingBottom: "100%", // square
+            borderRadius: 28,
+            overflow: "hidden",
+            background: "#111",
+          }}>
+            {/* Video */}
+            <video
+              ref={videoRef}
+              autoPlay muted playsInline
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: "scaleX(-1)",
+              }}
+            />
+
+            {/* Photo flash */}
+            {flash && (
               <div style={{
-                width: 200,
-                height: 4,
-                background: "#1f1f1f",
-                borderRadius: 4,
-                overflow: "hidden",
-              }}>
-                <div style={{
-                  height: "100%",
-                  width: `${modelProgress}%`,
-                  background: "linear-gradient(90deg, #ff5a5a, #ff8a5a)",
-                  borderRadius: 4,
-                  transition: "width 0.5s ease",
-                }} />
-              </div>
-              <p style={{ color: "#aaa", fontSize: 13, margin: 0 }}>
-                Loading AI models… {modelProgress}%
-              </p>
-            </div>
-          )}
+                position: "absolute", inset: 0,
+                background: "white", opacity: 0.9, zIndex: 20,
+              }} />
+            )}
 
-          {/* Capturing progress overlay */}
-          {phase === "capturing" && (
+            {/* Dark vignette overlay with oval cutout */}
+            <svg
+              viewBox="0 0 400 400"
+              style={{
+                position: "absolute", inset: 0,
+                width: "100%", height: "100%",
+                zIndex: 3, pointerEvents: "none",
+              }}
+            >
+              <defs>
+                <mask id="oval-mask">
+                  <rect width="400" height="400" fill="white" />
+                  <ellipse cx="200" cy="185" rx="130" ry="155" fill="black" />
+                </mask>
+              </defs>
+              {/* Dark surround */}
+              <rect width="400" height="400" fill="rgba(0,0,0,0.55)" mask="url(#oval-mask)" />
+            </svg>
+
+            {/* Spinning border around oval */}
             <div style={{
               position: "absolute",
-              bottom: 16,
-              left: "50%",
-              transform: "translateX(-50%)",
-              background: "rgba(10,10,10,0.85)",
-              border: "1px solid #333",
-              borderRadius: 20,
-              padding: "8px 20px",
-              backdropFilter: "blur(8px)",
+              top: "50%", left: "50%",
+              transform: "translate(-50%, -54%)",
+              width: "66%", height: "78%",
+              zIndex: 4, pointerEvents: "none",
             }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: "50%",
-                    background: i < captureCount ? "#22c55e" : "#333",
-                    boxShadow: i < captureCount ? "0 0 8px #22c55e" : "none",
-                    transition: "all 0.3s ease",
-                  }} />
-                ))}
-                <span style={{ color: "#aaa", fontSize: 12, marginLeft: 4 }}>
-                  Frame {captureCount}/5
+              <svg viewBox="0 0 260 310" style={{ width: "100%", height: "100%", overflow: "visible" }}>
+                <defs>
+                  <linearGradient id="spin-grad" gradientTransform={`rotate(${scanDeg}, 0.5, 0.5)`} gradientUnits="objectBoundingBox">
+                    <stop offset="0%" stopColor="transparent" />
+                    <stop offset="30%" stopColor={borderColor} stopOpacity="0.9" />
+                    <stop offset="60%" stopColor={borderColor} />
+                    <stop offset="100%" stopColor="transparent" />
+                  </linearGradient>
+                </defs>
+                {/* Outer glow */}
+                <ellipse cx="130" cy="155" rx="126" ry="151"
+                  fill="none"
+                  stroke={phase === "locked" ? "rgba(34,197,94,0.2)" : "transparent"}
+                  strokeWidth="8"
+                />
+                {/* Spinning arc */}
+                <ellipse cx="130" cy="155" rx="126" ry="151"
+                  fill="none"
+                  stroke="url(#spin-grad)"
+                  strokeWidth="3"
+                  style={{ transition: "stroke 0.3s ease" }}
+                />
+                {/* Static outline */}
+                <ellipse cx="130" cy="155" rx="126" ry="151"
+                  fill="none"
+                  stroke={phase === "locked" ? "rgba(34,197,94,0.5)" : "rgba(255,255,255,0.15)"}
+                  strokeWidth="1.5"
+                  style={{ transition: "stroke 0.3s ease" }}
+                />
+              </svg>
+            </div>
+
+            {/* Countdown circle */}
+            {phase === "locked" && (
+              <div style={{
+                position: "absolute",
+                bottom: "12%", left: "50%",
+                transform: "translateX(-50%)",
+                width: 52, height: 52,
+                borderRadius: "50%",
+                background: "rgba(34,197,94,0.15)",
+                border: "2px solid #22c55e",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                zIndex: 10,
+                boxShadow: "0 0 20px rgba(34,197,94,0.4)",
+              }}>
+                <span style={{ color: "#22c55e", fontSize: 22, fontWeight: 800 }}>
+                  {countdown}
                 </span>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Submitting overlay */}
-          {phase === "submitting" && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(10,10,10,0.85)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 12,
-              backdropFilter: "blur(4px)",
-            }}>
+            {/* Capture progress dots */}
+            {phase === "capturing" && (
               <div style={{
-                width: 40,
-                height: 40,
-                border: "3px solid #333",
-                borderTop: "3px solid #ff5a5a",
-                borderRadius: "50%",
-                animation: "spin 1s linear infinite",
-              }} />
-              <p style={{ color: "#aaa", fontSize: 14, margin: 0 }}>Uploading face data…</p>
-            </div>
-          )}
-        </div>
+                position: "absolute",
+                bottom: "10%", left: "50%",
+                transform: "translateX(-50%)",
+                display: "flex", gap: 8, zIndex: 10,
+                background: "rgba(0,0,0,0.7)",
+                padding: "8px 16px", borderRadius: 20,
+                backdropFilter: "blur(8px)",
+              }}>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} style={{
+                    width: 10, height: 10, borderRadius: "50%",
+                    background: i < captureCount ? "#22c55e" : "#333",
+                    boxShadow: i < captureCount ? "0 0 8px #22c55e" : "none",
+                    transition: "all 0.2s ease",
+                  }} />
+                ))}
+              </div>
+            )}
 
-        {/* Bottom panel */}
-        <div style={{ padding: "20px 28px 28px" }}>
-          {/* Status text */}
-          <p style={{
-            color: phase === "error" ? "#ff5a5a" :
-              phase === "done" ? "#22c55e" :
-              faceDetected ? "#22c55e" : "#666",
-            fontSize: 13,
-            textAlign: "center",
-            marginBottom: 16,
-            minHeight: 20,
-          }}>
-            {phase === "permission" && "Requesting camera access…"}
-            {phase === "loading" && "Camera ready — loading face detection AI…"}
-            {phase === "detecting" && (faceDetected
-              ? "✓ Face detected! Click capture when ready."
-              : "Position your face in the frame and hold still")}
-            {phase === "capturing" && `Capturing frame ${captureCount} of 5 — hold still…`}
-            {phase === "submitting" && "Uploading your face data securely…"}
-            {phase === "done" && "✓ Face submitted! Awaiting admin approval."}
-            {phase === "error" && (error ?? "Something went wrong")}
-          </p>
-
-          {/* Instructions row */}
-          {(phase === "detecting" || phase === "capturing") && (
-            <div style={{
-              display: "flex",
-              gap: 10,
-              marginBottom: 16,
-              justifyContent: "center",
-            }}>
-              {[
-                { icon: "💡", label: "Good lighting" },
-                { icon: "👁", label: "Look straight" },
-                { icon: "😐", label: "Neutral expression" },
-              ].map((tip) => (
-                <div key={tip.label} style={{
-                  background: "#0f0f0f",
-                  border: "1px solid #1f1f1f",
-                  borderRadius: 10,
-                  padding: "6px 12px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                  color: "#555",
+            {/* Loading overlay on camera */}
+            {phase === "loading" && (
+              <div style={{
+                position: "absolute", inset: 0,
+                background: "rgba(0,0,0,0.7)",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center",
+                gap: 16, zIndex: 15, backdropFilter: "blur(4px)",
+              }}>
+                <div style={{
+                  width: 180, height: 4, background: "#222", borderRadius: 4, overflow: "hidden",
                 }}>
-                  <span>{tip.icon}</span>
-                  <span>{tip.label}</span>
+                  <div style={{
+                    height: "100%", width: `${loadPct}%`,
+                    background: "linear-gradient(90deg,#ff5a5a,#ff8a5a)",
+                    borderRadius: 4, transition: "width 0.4s ease",
+                  }} />
                 </div>
-              ))}
-            </div>
-          )}
+                <p style={{ color: "#aaa", fontSize: 13, margin: 0 }}>{loadMsg}</p>
+              </div>
+            )}
 
-          {/* Done state */}
-          {phase === "done" && (
+            {/* Submitting overlay */}
+            {phase === "submitting" && (
+              <div style={{
+                position: "absolute", inset: 0,
+                background: "rgba(0,0,0,0.8)",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center",
+                gap: 14, zIndex: 15,
+              }}>
+                <div style={{
+                  width: 36, height: 36,
+                  border: "3px solid #333", borderTop: "3px solid #ff5a5a",
+                  borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite",
+                }} />
+                <p style={{ color: "#aaa", fontSize: 13, margin: 0 }}>Uploading…</p>
+              </div>
+            )}
+          </div>
+
+          {/* Status */}
+          <div style={{ textAlign: "center", marginTop: 20 }}>
             <div style={{
-              background: "rgba(34,197,94,0.06)",
-              border: "1px solid rgba(34,197,94,0.2)",
-              borderRadius: 16,
-              padding: "16px 20px",
-              textAlign: "center",
-              marginBottom: 16,
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "#111", border: `1px solid ${phase === "locked" ? "rgba(34,197,94,0.4)" : "#1f1f1f"}`,
+              borderRadius: 20, padding: "8px 18px",
+              transition: "border-color 0.3s ease",
+              boxShadow: phase === "locked" ? "0 0 16px rgba(34,197,94,0.15)" : "none",
             }}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
-              <p style={{ color: "#22c55e", fontWeight: 600, margin: "0 0 6px", fontSize: 15 }}>
-                Enrollment submitted
-              </p>
-              <p style={{ color: "#555", fontSize: 12, margin: 0 }}>
-                An admin will approve your face within 24 hours.
-                Once approved, use the mobile app to mark attendance.
-              </p>
+              {/* Indicator dot */}
+              <div style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: phase === "locked" ? "#22c55e" :
+                  phase === "loading" ? "#ff8a5a" :
+                  isScanning && faceIn ? "#22c55e" : "#555",
+                boxShadow: (phase === "locked" || (isScanning && faceIn)) ? "0 0 6px #22c55e" : "none",
+                animation: phase === "loading" ? "pulse 1.5s infinite" : "none",
+              }} />
+              <span style={{
+                color: phase === "locked" ? "#22c55e" : "#aaa",
+                fontSize: 13, fontWeight: 500,
+              }}>
+                {statusText}
+              </span>
             </div>
-          )}
 
-          {/* Error state */}
-          {phase === "error" && (
-            <div style={{
-              background: "rgba(255,90,90,0.06)",
-              border: "1px solid rgba(255,90,90,0.2)",
-              borderRadius: 16,
-              padding: "14px 20px",
-              textAlign: "center",
-              marginBottom: 16,
-            }}>
-              <p style={{ color: "#ff5a5a", margin: "0 0 12px", fontSize: 14 }}>{error}</p>
-              <button
-                onClick={() => window.location.reload()}
-                style={{
-                  background: "#1f1f1f",
-                  border: "1px solid #333",
-                  borderRadius: 10,
-                  color: "#aaa",
-                  padding: "8px 20px",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                Try Again
-              </button>
-            </div>
-          )}
-
-          {/* Action button */}
-          {phase === "detecting" && (
-            <button
-              onClick={() => void captureFrames()}
-              disabled={!faceDetected}
-              style={{
-                width: "100%",
-                padding: "15px",
-                background: faceDetected
-                  ? "linear-gradient(135deg, #ff5a5a, #ff8a5a)"
-                  : "#1a1a1a",
-                border: faceDetected ? "none" : "1px solid #222",
-                borderRadius: 14,
-                color: faceDetected ? "#fff" : "#444",
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: faceDetected ? "pointer" : "not-allowed",
-                transition: "all 0.3s ease",
-                letterSpacing: 0.3,
-              }}
-            >
-              {faceDetected ? "📸  Capture My Face" : "Waiting for face…"}
-            </button>
-          )}
-
-          {phase === "done" && (
-            <button
-              onClick={() => router.push("/student")}
-              style={{
-                width: "100%",
-                padding: "15px",
-                background: "linear-gradient(135deg, #ff5a5a, #ff8a5a)",
-                border: "none",
-                borderRadius: 14,
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: "pointer",
-              }}
-            >
-              Go to My Dashboard →
-            </button>
-          )}
+            {/* Tips */}
+            {isScanning && (
+              <div style={{
+                display: "flex", gap: 8, justifyContent: "center",
+                marginTop: 14, flexWrap: "wrap",
+              }}>
+                {[["💡", "Good light"], ["👁", "Look straight"], ["📏", "Fill the oval"]].map(([icon, label]) => (
+                  <span key={label} style={{
+                    background: "#0f0f0f", border: "1px solid #1a1a1a",
+                    borderRadius: 8, padding: "4px 10px",
+                    color: "#444", fontSize: 12,
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                    {icon} {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
       `}</style>
     </div>
   );
