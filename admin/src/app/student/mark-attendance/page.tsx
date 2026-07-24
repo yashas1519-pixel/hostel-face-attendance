@@ -116,10 +116,11 @@ export default function MarkAttendancePage() {
       const me = await meRes.json() as { hostelId?: string | null; enrollmentStatus: string };
       if (me.enrollmentStatus !== "approved") { setPhaseSync("error"); setMsg("Face enrollment must be approved first."); return; }
       if (!me.hostelId) { setPhaseSync("no-hostel"); return; }
-      setHostelId(me.hostelId);
+      const hId: string = me.hostelId; // narrowed — TypeScript loses narrowing inside setTimeout
+      setHostelId(hId);
 
       setMsg("Checking check-in windows…");
-      const winRes = await fetchWithAuth(`/hostel/${me.hostelId}/active-window`);
+      const winRes = await fetchWithAuth(`/hostel/${hId}/active-window`);
       let win: ActiveWindow | null = null;
       if (winRes.ok) {
         const text = await winRes.text();
@@ -128,7 +129,8 @@ export default function MarkAttendancePage() {
         }
       }
       if (!win) { setPhaseSync("no-window"); return; }
-      setWindow_(win);
+      const checkedWin: ActiveWindow = win; // narrowed const for closure
+      setWindow_(checkedWin);
 
       setMsg("Starting camera…");
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
@@ -151,7 +153,7 @@ export default function MarkAttendancePage() {
           videoRef.current.srcObject = stream;
           void videoRef.current.play();
         }
-        startScanLoop(faceapi, me.hostelId, win);
+        startScanLoop(faceapi, hId, checkedWin);
       }, 100);
     } catch (e) {
       setPhaseSync("error");
