@@ -47,7 +47,14 @@ export default function MarkAttendancePage() {
   async function boot() {
     try {
       setMsg("Checking your hostel assignment…");
-      const me = await fetchWithAuth("/auth/me").then((r) => r.json()) as { hostelId?: string; enrollmentStatus: string };
+      const meRes = await fetchWithAuth("/auth/me");
+      if (!meRes.ok) {
+        setPhaseSync("error");
+        setMsg("Session expired — please log in again.");
+        return;
+      }
+      const me = await meRes.json() as { hostelId?: string | null; enrollmentStatus: string };
+
       if (me.enrollmentStatus !== "approved") {
         setPhaseSync("error"); setMsg("Your face enrollment must be approved first."); return;
       }
@@ -55,7 +62,15 @@ export default function MarkAttendancePage() {
       setHostelId(me.hostelId);
 
       setMsg("Checking check-in windows…");
-      const win = await fetchWithAuth(`/hostel/${me.hostelId}/active-window`).then((r) => r.json()) as ActiveWindow | null;
+      const winRes = await fetchWithAuth(`/hostel/${me.hostelId}/active-window`);
+      // active-window returns the window object or null/empty when none active
+      let win: ActiveWindow | null = null;
+      if (winRes.ok) {
+        const text = await winRes.text();
+        if (text && text !== "null" && text.trim().length > 0) {
+          try { win = JSON.parse(text) as ActiveWindow; } catch { win = null; }
+        }
+      }
       if (!win) { setPhaseSync("no-window"); return; }
       setWindow_(win);
 
