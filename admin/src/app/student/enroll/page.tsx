@@ -9,7 +9,7 @@ type Phase =
   | "loading"
   | "ready"       // scanning for face
   | "locked"      // face found, countdown
-  | "capturing"   // 5 frames
+  | "capturing"   // 15 frames across 3 angles
   | "submitting"
   | "done"
   | "error";
@@ -117,7 +117,7 @@ export default function EnrollPage() {
         try {
           // Bare detection only — no descriptors in realtime loop (fast, no recognition model needed)
           lastResults = await faceapi
-            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }));
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }));
         } catch {
           lastResults = [];
         }
@@ -199,26 +199,53 @@ export default function EnrollPage() {
     } catch { /* non-critical */ }
 
     const descriptors: Float32Array[] = [];
+    // 15 frames: 5 facing straight, 5 slight left, 5 slight right
+    // This makes the stored embedding robust to minor pose/appearance changes (beard, glasses)
+    const ANGLES = [
+      { label: "Look straight", frames: 5 },
+      { label: "Turn slightly LEFT", frames: 5 },
+      { label: "Turn slightly RIGHT", frames: 5 },
+    ];
+    let framesDone = 0;
 
-    for (let i = 0; i < 5; i++) {
-      // Flash
-      setFlash(true);
-      await new Promise((r) => setTimeout(r, 100));
-      setFlash(false);
-      await new Promise((r) => setTimeout(r, 400));
-      setCaptureCount(i + 1);
+    for (const angle of ANGLES) {
+      // Show direction hint in UI
+      setError(""); // clear any previous
+      // Brief pause so user can adjust
+      setCaptureCount(framesDone);
+      await new Promise((r) => setTimeout(r, 800));
 
-      const result = await faceapi
-        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }))
-        .withFaceLandmarks(true)   // true = use tiny landmark model
-        .withFaceDescriptor();
+      for (let i = 0; i < angle.frames; i++) {
+        setFlash(true);
+        await new Promise((r) => setTimeout(r, 80));
+        setFlash(false);
+        await new Promise((r) => setTimeout(r, 420));
+        framesDone++;
+        setCaptureCount(framesDone);
 
-      if (!result) {
-        setError("Face moved during capture — please try again.");
-        setPhaseSync("error");
-        return;
+        // High-accuracy capture: inputSize 512, threshold 0.5
+        const result = await faceapi
+          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.5 }))
+          .withFaceLandmarks(true)
+          .withFaceDescriptor();
+
+        if (!result) {
+          setError("Face not detected clearly — keep still and ensure good lighting.");
+          setPhaseSync("error");
+          return;
+        }
+
+        // Face quality gate: must be large enough (min 15% of video width)
+        const minFaceRatio = 0.15;
+        const faceRatio = result.detection.box.width / (video.videoWidth || 640);
+        if (faceRatio < minFaceRatio) {
+          setError("Move closer to the camera.");
+          setPhaseSync("error");
+          return;
+        }
+
+        descriptors.push(result.descriptor);
       }
-      descriptors.push(result.descriptor);
     }
 
     // Average
@@ -255,7 +282,7 @@ export default function EnrollPage() {
     loading: loadMsg,
     ready: "Position your face inside the oval",
     locked: `Hold still… ${countdown}`,
-    capturing: `Capturing ${captureCount} / 5`,
+    capturing: `Scanning… ${captureCount} / 15 — ${captureCount < 5 ? "Look straight" : captureCount < 10 ? "Turn slightly LEFT" : "Turn slightly RIGHT"}`,
     submitting: "Uploading securely…",
     done: "Enrollment submitted!",
     error: error ?? "Something went wrong",
@@ -451,11 +478,14 @@ export default function EnrollPage() {
                 padding: "8px 16px", borderRadius: 20,
                 backdropFilter: "blur(8px)",
               }}>
-                {Array.from({ length: 5 }).map((_, i) => (
+                {Array.from({ length: 15 }).map((_, i) => (
                   <div key={i} style={{
-                    width: 10, height: 10, borderRadius: "50%",
-                    background: i < captureCount ? "#22c55e" : "#333",
-                    boxShadow: i < captureCount ? "0 0 8px #22c55e" : "none",
+                    width: i % 5 === 0 && i > 0 ? 2 : 8,  // thin separator every 5
+                    height: i % 5 === 0 && i > 0 ? 16 : 8,
+                    borderRadius: i % 5 === 0 && i > 0 ? 1 : "50%",
+                    background: i % 5 === 0 && i > 0 ? "#555"
+                      : i < captureCount ? "#22c55e" : "#333",
+                    boxShadow: i < captureCount && i % 5 !== 0 ? "0 0 6px #22c55e" : "none",
                     transition: "all 0.2s ease",
                   }} />
                 ))}

@@ -187,11 +187,19 @@ export class AttendanceService {
       }
     }
 
-    // ── Step 7: Face match (cosine similarity ≥ 0.65) ─────────────────────
+    // ── Step 7: Face match (tiered cosine similarity) ──────────────────────
+    // ≥ 0.72 → confident match (present)
+    // 0.60–0.72 → borderline (beard/glasses change) → flagged for admin review
+    // < 0.60 → different person → rejected
     const storedEmbedding = this.enrollmentService.decryptEmbedding(student.faceEmbedding!);
     const faceMatchScore = cosineSimilarity(dto.embedding, storedEmbedding);
-    if (status === 'present' && faceMatchScore < 0.65) {
-      reject(`Face match too low: ${faceMatchScore.toFixed(3)}`);
+    if (status === 'present' && faceMatchScore < 0.60) {
+      reject(`Face does not match enrolled photo (score: ${faceMatchScore.toFixed(3)})`);
+    } else if (status === 'present' && faceMatchScore < 0.72) {
+      // Borderline — could be beard growth, glasses, lighting change
+      // Mark as flagged instead of rejecting so admin can review
+      status = 'flagged';
+      rejectionReason = `Face match borderline (score: ${faceMatchScore.toFixed(3)}) — possible appearance change. Admin review required.`;
     }
 
     // ── Step 8: Liveness + parallax ────────────────────────────────────────

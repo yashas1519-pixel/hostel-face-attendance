@@ -261,7 +261,7 @@ export default function MarkAttendancePage() {
       const video = videoRef.current;
       if (video && video.readyState >= 2 && ts - lastTs > 300) {
         lastTs = ts;
-        try { lastResults = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 })); }
+        try { lastResults = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.45 })); }
         catch { lastResults = []; }
       }
 
@@ -307,7 +307,7 @@ export default function MarkAttendancePage() {
       setFlash(false); await new Promise((r) => setTimeout(r, 420));
       setCaptureCount(i + 1);
       const res = await faceapi
-        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }))
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.55 }))
         .withFaceLandmarks(true).withFaceDescriptor();
       if (!res) { setPhaseSync("error"); setMsg("Face moved during capture — try again."); return; }
       descriptors.push(res.descriptor);
