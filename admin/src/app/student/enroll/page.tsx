@@ -112,9 +112,9 @@ export default function EnrollPage() {
       if (video && video.readyState >= 2 && ts - lastDetectTs > 300) {
         lastDetectTs = ts;
         try {
+          // Bare detection only — no descriptors in realtime loop (fast, no recognition model needed)
           lastResults = await faceapi
-            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
-            .withFaceDescriptors();
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 }));
         } catch {
           lastResults = [];
         }
@@ -122,15 +122,15 @@ export default function EnrollPage() {
 
       // Is the face centred in the oval?
       let inOval = false;
-      if (video && lastResults.length === 1) {
+      if (video && lastResults.length >= 1) {
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 640;
-        const box = lastResults[0].detection.box;
+        // bare detectAllFaces returns Detection objects directly (not wrapped)
+        const box = lastResults[0].box;
         const cx = box.x + box.width / 2;
         const cy = box.y + box.height / 2;
         const ox = vw * 0.5, oy = vh * 0.45, rx = vw * 0.32, ry = vh * 0.38;
-        inOval = ((cx - ox) / rx) ** 2 + ((cy - oy) / ry) ** 2 <= 1.0
-          && box.width > vw * 0.15; // face must be big enough
+        inOval = ((cx - ox) / rx) ** 2 + ((cy - oy) / ry) ** 2 <= 1.2; // slightly generous
       }
 
       setFaceInSync(inOval);
@@ -141,7 +141,7 @@ export default function EnrollPage() {
           lockedSinceRef.current = ts;
           setPhaseSync("locked");
           setCountdown(3);
-          scheduleCapture(faceapi, lastResults[0].descriptor, ts, lastResults);
+          scheduleCapture(faceapi, ts);
         }
       } else if (!inOval && p === "locked") {
         // Face moved — reset
@@ -158,7 +158,7 @@ export default function EnrollPage() {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function scheduleCapture(faceapi: any, _firstDescriptor: Float32Array, _startTs: number, _lastResults: any[]) {
+  function scheduleCapture(faceapi: any, _startTs: number) {
     // Countdown 3 → 2 → 1 then capture
     let count = 3;
     const tick = () => {
