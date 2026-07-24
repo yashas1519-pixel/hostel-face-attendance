@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/students", label: "Students", icon: "👤" },
   { href: "/dashboard/enrollments", label: "Enrollments", icon: "📋" },
   { href: "/dashboard/attendance", label: "Attendance", icon: "✅" },
+  { href: "/dashboard/wardens", label: "Wardens", icon: "🛡️" },
   { href: "/dashboard/leave", label: "Leave Requests", icon: "🗓" },
 ];
 
