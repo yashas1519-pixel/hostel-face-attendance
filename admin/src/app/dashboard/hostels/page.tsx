@@ -16,21 +16,30 @@ interface LeafletMap {
   remove(): void;
   setView(center: [number, number], zoom: number): LeafletMap;
   on(event: string, fn: (e: { latlng: { lat: number; lng: number } }) => void): LeafletMap;
+  fitBounds(bounds: LeafletBounds): void;
 }
 interface LeafletPolyline {
+  remove(): void;
   setLatLngs(latlngs: [number, number][]): void;
   addTo(map: LeafletMap): LeafletPolyline;
 }
 interface LeafletMarker {
   remove(): void;
+  addTo(map: LeafletMap): LeafletMarker;
+  on(event: string, fn: (e: { target: { getLatLng(): { lat: number; lng: number } } }) => void): LeafletMarker;
+}
+interface LeafletBounds {
+  isValid(): boolean;
 }
 declare global {
   interface Window {
     L: {
       map(el: HTMLDivElement): LeafletMap;
       tileLayer(url: string, opts: { attribution: string; maxZoom: number; [key: string]: unknown }): { addTo(m: LeafletMap): void };
-      polyline(latlngs: [number, number][], opts: { color: string }): LeafletPolyline;
-      marker(latlng: [number, number]): LeafletMarker & { addTo(m: LeafletMap): LeafletMarker };
+      polyline(latlngs: [number, number][], opts: { color: string; [key: string]: unknown }): LeafletPolyline;
+      marker(latlng: [number, number], opts?: { icon?: unknown; draggable?: boolean }): LeafletMarker;
+      latLngBounds(latlngs: [number, number][]): LeafletBounds;
+      divIcon(opts: { className: string; html: string; iconSize: [number, number]; iconAnchor: [number, number] }): unknown;
     };
   }
 }
